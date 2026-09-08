@@ -1,188 +1,389 @@
 # Koderevox AI Content Factory
 
-Self-hosted Content Inbox и AI-фабрика контента для Telegram. Phase 3 превращает сохранённое видео
-и timestamped transcript в управляемый человеком вертикальный Short: предлагает три концепции,
-создаёт проверяемый `EditPlan`, вырезает выбранные фрагменты и длинные паузы, делает framing,
-нормализует звук, прожигает ASS-субтитры и возвращает MP4 preview. Phase 1/2 workflows сохранены.
+Self-hosted система, которая превращает Telegram в личный контент-инбокс и помогает собирать
+технический контент без AI-slop.
 
-Система рассчитана на несколько пользователей и проектов, хотя первый deployment может быть
-однопользовательским. Проект `Koderevox` с brand context создаётся начальной миграцией.
+Вы отправляете боту мысль, голосовое, ссылку, документ или видео. Система сохраняет оригинал,
+извлекает смысл, предлагает идеи и сценарии, а из видео умеет собрать вертикальный Short с
+монтажом, нормализованным звуком и субтитрами. Финальное решение всегда остаётся за человеком.
 
-## Архитектура
+> Проект можно развернуть на собственном Debian/Linux-сервере. Исходные медиа хранятся у вас,
+> а не в стороннем облачном хранилище.
+
+## Содержание
+
+- [Что уже работает](#что-уже-работает)
+- [Как это выглядит для пользователя](#как-это-выглядит-для-пользователя)
+- [Запуск за 10 минут](#запуск-за-10-минут)
+- [Подключение AI](#подключение-ai)
+- [Проверка после запуска](#проверка-после-запуска)
+- [Telegram-сценарии](#telegram-сценарии)
+- [Как устроен проект](#как-устроен-проект)
+- [Настройки](#настройки)
+- [Команды администратора](#команды-администратора)
+- [Разработка и тесты](#разработка-и-тесты)
+- [Частые проблемы](#частые-проблемы)
+- [Ограничения](#ограничения)
+- [Лицензия](#лицензия)
+
+## Что уже работает
+
+### Content Inbox
+
+- Принимает обычный текст, URL, voice, audio, video, video note, изображения и документы.
+- Сохраняет оригинальные файлы через абстракцию хранилища `LocalStorage`.
+- Извлекает текст из `.txt`, `.md` и PDF с текстовым слоем.
+- Безопасно загружает публичные HTTP/HTTPS-страницы и блокирует SSRF-доступ к локальной сети.
+- Транскрибирует аудио и видео через `faster-whisper`.
+- Хранит timestamps сегментов и отдельных слов для будущего монтажа и субтитров.
+- Определяет тему, краткое содержание, ключевые мысли и потенциал материала.
+- Помечает, когда для хорошего контента действительно не хватает контекста.
+- Позволяет искать, фильтровать, архивировать и повторно использовать материалы.
+
+### Генерация контента
+
+- Создаёт три действительно разных content angle из одного источника.
+- Генерирует сценарии для YouTube Shorts и TikTok живым языком.
+- Создаёт отдельный Telegram-пост, а не копию транскрипции.
+- Сохраняет версии идей и черновиков в PostgreSQL.
+- Использует structured output и проверяет ответы LLM через Pydantic.
+- Не смешивает факты из источника с предложениями AI.
+
+### Полуавтоматический видеомонтаж
+
+- Находит три возможные концепции Short в длинном видео.
+- Выбирает фрагменты только из реальных диапазонов Whisper.
+- Валидирует каждый `EditPlan` до запуска FFmpeg.
+- Вырезает выбранные фрагменты и только явно длинные паузы.
+- Собирает вертикальный MP4 `1080×1920`, H.264/AAC, `yuv420p`, faststart.
+- Поддерживает `CENTER_CROP`, `FIT_BLUR`, `SCREEN_FIT` и ручной framing.
+- Нормализует громкость и при необходимости уменьшает шум.
+- Прожигает стилизованные ASS-субтитры.
+- Имеет три спокойных preset: `CLEAN`, `DYNAMIC`, `TECH`.
+- Отправляет preview в Telegram и позволяет одобрить или пересобрать ролик.
+- Сохраняет один и тот же `EditPlan` при обычном rerender — монтаж не меняется случайно.
+
+## Как это выглядит для пользователя
+
+### Из голосовой мысли в сценарий
 
 ```text
-Telegram Bot ──HTTP── FastAPI ── PostgreSQL
-                         │
-                         ├── Redis → media queue → SourceProcessingService
-                         │                         ├── FFmpeg / faster-whisper
-                         │                         └── Content Intelligence
-                         └── Redis → render queue (concurrency 1)
-                                                  └── VideoRenderService
-                                                       ├── validated EditPlan
-                                                       ├── pause/subtitle/framing/audio
-                                                       ├── FFmpegVideoEditor
-                                                       └── LocalStorage → Telegram preview
+Вы отправляете voice
+        ↓
+Бот сразу отвечает «Получил, обрабатываю»
+        ↓
+Worker: FFmpeg → Whisper → Content Intelligence
+        ↓
+Бот показывает тему, summary, score и подходящие форматы
+        ↓
+Вы нажимаете «Short»
+        ↓
+Получаете готовый сценарий
 ```
 
-Telegram handler только регистрирует metadata, ставит job и сразу отвечает. Идемпотентный
-`SourceProcessingService` выполняет стадии `RECEIVED → DOWNLOADED → MEDIA_PREPARED → TRANSCRIBED /
-EXTRACTED → ENRICHED → READY`. Ошибка сохраняется вместе с точной стадией; temporary failures
-повторяются Celery не более трёх раз. Timestamped STT segments и words используются Phase 3.
-
-LLM никогда не получает video/audio bytes и не строит FFmpeg-команды. Он видит transcript,
-Content Intelligence, metadata и пользовательский контекст, а возвращает только structured
-concepts/EditPlan. Backend валидирует duration, segment IDs, диапазоны и emphasis-текст. Обычный
-rerender использует сохранённый план и не вызывает AI повторно.
-
-## Структура
+### Из длинного видео в вертикальный Short
 
 ```text
-app/
-├── ai/                 # provider abstraction, adapters, structured prompts
-├── api/routes/         # FastAPI endpoints
-├── bot/                # aiogram handlers, FSM, keyboards, whitelist
-├── core/               # settings and structured logging
-├── db/migrations/      # Alembic and Koderevox seed
-├── models/             # SQLAlchemy entities and state enums
-├── schemas/            # API and LLM Pydantic contracts
-├── services/           # inbox/STT, clip selector, subtitles, framing and video rendering
-├── storage/            # LocalStorage abstraction
-└── tasks/              # Celery application
-tests/                  # service, workflow, provider and permission tests
+Вы отправляете видео
+        ↓
+Система сохраняет оригинал и транскрибирует речь
+        ↓
+AI предлагает три монтажные концепции
+        ↓
+Вы выбираете одну и проверяете план
+        ↓
+Render worker собирает ролик через FFmpeg
+        ↓
+Бот присылает MP4 preview
+        ↓
+Вы одобряете ролик или меняете монтаж / текст / стиль
 ```
 
-## Быстрый запуск
+Видео и аудио не отправляются в LLM. AI получает только транскрипцию, безопасные метаданные,
+Content Intelligence и добавленный пользователем контекст.
 
-Требования: Docker Engine с Compose v2 и Telegram bot token от BotFather.
+## Запуск за 10 минут
+
+Этот вариант подходит, даже если вы не Python-разработчик.
+
+### 1. Что понадобится
+
+- Linux-сервер или компьютер с Docker;
+- Docker Engine и команда `docker compose`;
+- Telegram-бот, созданный через официальный `@BotFather`;
+- ваш числовой Telegram user ID;
+- минимум несколько гигабайт свободного места для Docker images, Whisper-модели и медиа;
+- AI endpoint: локальный LM Studio либо OpenAI-compatible API.
+
+Для первого знакомства настоящий AI необязателен: проект по умолчанию использует
+детерминированный `mock` provider.
+
+### 2. Склонируйте проект
+
+```bash
+git clone https://github.com/NarKomaRick/koderevox-content-factory.git
+cd koderevox-content-factory
+```
+
+### 3. Создайте конфигурацию
 
 ```bash
 cp .env.example .env
-# заполнить TELEGRAM_BOT_TOKEN и TELEGRAM_ALLOWED_USER_IDS
+```
+
+Откройте `.env` любым текстовым редактором. Для первого запуска достаточно проверить эти поля:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=сюда_токен_от_BotFather
+TELEGRAM_ALLOWED_USER_IDS=сюда_ваш_числовой_telegram_id
+AI_PROVIDER=mock
+```
+
+Если разрешённых пользователей несколько, перечислите ID через запятую:
+
+```dotenv
+TELEGRAM_ALLOWED_USER_IDS=123456789,987654321
+```
+
+Не добавляйте кавычки и пробелы вокруг `=`. Никогда не публикуйте заполненный `.env`.
+
+### 4. Запустите систему
+
+```bash
 docker compose up -d --build
+```
+
+Первый запуск может занять заметное время: Docker скачивает образы и Python-зависимости.
+
+### 5. Убедитесь, что контейнеры работают
+
+```bash
 docker compose ps
 ```
 
-После запуска:
+Нужно увидеть шесть сервисов:
+
+| Сервис | Зачем он нужен |
+|---|---|
+| `postgres` | хранит пользователей, источники, идеи, черновики и проекты видео |
+| `redis` | передаёт фоновые задания worker-ам |
+| `api` | FastAPI backend и Swagger |
+| `bot` | Telegram-интерфейс |
+| `worker` | загрузка, извлечение текста, Whisper и Content Intelligence |
+| `render-worker` | тяжёлый FFmpeg-рендер; по умолчанию только один одновременно |
+
+Затем откройте:
 
 - API: <http://localhost:8000>
+- Проверка здоровья: <http://localhost:8000/health>
 - Swagger: <http://localhost:8000/docs>
-- Healthcheck: <http://localhost:8000/health>
 
-API-контейнер применяет миграции перед запуском. Бот начинает long polling после успешного
-healthcheck API.
+Отправьте боту `/start`. Неизвестный пользователь получит `Access denied`.
 
-## Переменные окружения
+## Подключение AI
 
-| Переменная | Назначение |
-|---|---|
-| `DATABASE_URL` | Async SQLAlchemy URL PostgreSQL |
-| `REDIS_URL` | Celery broker/result backend |
-| `CELERY_TASK_ALWAYS_EAGER` | Только для local/test запуска без Redis |
-| `TELEGRAM_BOT_TOKEN` | Секрет Telegram-бота; не коммитить |
-| `TELEGRAM_ALLOWED_USER_IDS` | Telegram ID через запятую; остальные получают `Access denied` |
-| `BACKEND_URL` | URL API, доступный bot-контейнеру |
-| `AI_PROVIDER` | `openai_compatible` или `mock` |
-| `AI_BASE_URL` | Base URL с `/v1` |
-| `AI_API_KEY` | API key; для LM Studio может быть произвольным непустым значением |
-| `AI_MODEL` | Имя модели, передаваемое provider endpoint |
-| `AI_TIMEOUT_SECONDS` | Timeout одного LLM-запроса |
-| `AI_MAX_RETRIES` | Повторы при HTTP/JSON/schema ошибке |
-| `MEDIA_ROOT` | Корень LocalStorage внутри контейнера |
-| `MAX_MEDIA_SIZE_MB` | Максимальный Telegram media file |
-| `STT_MODEL` | faster-whisper model |
-| `STT_DEVICE` | `cpu` или `cuda` |
-| `STT_COMPUTE_TYPE` | Например `int8`, `float16` |
-| `LINK_FETCH_TIMEOUT_SECONDS` | Timeout HTTP page fetch |
-| `LINK_MAX_SIZE_MB` | Максимальный HTML response |
-| `LINK_MAX_REDIRECTS` | Максимум проверяемых redirects |
-| `DOCUMENT_MAX_CHARS` | Лимит извлечённого текста документа |
-| `VIDEO_WIDTH`, `VIDEO_HEIGHT`, `VIDEO_FPS` | Target canvas/fps; default 1080×1920/30 |
-| `VIDEO_CRF`, `VIDEO_PRESET` | Качество и x264 preset финального encode |
-| `VIDEO_MIN_DURATION`, `VIDEO_MAX_DURATION` | Quality limits валидатора EditPlan |
-| `PAUSE_REMOVAL_ENABLED` | Включить консервативное удаление длинной тишины |
-| `PAUSE_MIN_DURATION`, `PAUSE_KEEP_PADDING` | Порог тишины и сохраняемый padding |
-| `PAUSE_NOISE_DB` | Порог FFmpeg `silencedetect` |
-| `AUDIO_NORMALIZATION_ENABLED` | `loudnorm` и limiter для online-video |
-| `AUDIO_NOISE_REDUCTION_ENABLED` | Опциональный `afftdn` |
-| `HOOK_OVERLAY_ENABLED` | Короткий overlay в первые три секунды |
-| `VIDEO_FONT_PATH` | Явный open-source font для overlays |
-| `RENDER_TEMP_ROOT` | Временные workspace отдельных VideoProject |
-| `TELEGRAM_PREVIEW_MAX_SIZE_MB` | Порог перед сжатием Telegram preview |
-| `CELERY_RENDER_CONCURRENCY` | Параллелизм тяжёлой render queue; default `1` |
+### Самый простой безопасный тест
 
-Для первого безопасного smoke test оставьте `AI_PROVIDER=mock`. Он выдаёт детерминированные
-ответы и позволяет проверить весь workflow без передачи данных наружу.
+Оставьте:
 
-## LM Studio
+```dotenv
+AI_PROVIDER=mock
+```
 
-1. Загрузите модель и запустите Local Server в LM Studio.
-2. Разрешите подключения с Docker host при необходимости.
-3. В `.env` задайте:
+Система запустится без внешнего API и позволит проверить интерфейс и инфраструктуру. Результаты
+будут тестовыми, поэтому для реальной работы после проверки подключите модель.
+
+### Локальная модель через LM Studio
+
+1. Установите LM Studio на машине, доступной серверу.
+2. Загрузите instruct-модель, способную надёжно возвращать JSON.
+3. Откройте в LM Studio Local Server и запустите OpenAI-compatible endpoint.
+4. Укажите в `.env`:
 
 ```dotenv
 AI_PROVIDER=openai_compatible
 AI_BASE_URL=http://host.docker.internal:1234/v1
 AI_API_KEY=lm-studio
-AI_MODEL=<точный identifier загруженной модели>
+AI_MODEL=точный_identifier_модели_из_LM_Studio
 ```
 
-Для Linux alias `host.docker.internal` уже добавлен в API и worker через:
+Для Linux имя `host.docker.internal` уже проброшено в нужные контейнеры через Docker Compose.
+Если LM Studio находится на другом компьютере, укажите его публично доступный адрес вместо
+`host.docker.internal` и настройте firewall самостоятельно.
 
-```yaml
-extra_hosts:
-  - "host.docker.internal:host-gateway"
+### Облачный OpenAI-compatible endpoint
+
+```dotenv
+AI_PROVIDER=openai_compatible
+AI_BASE_URL=https://адрес-провайдера/v1
+AI_API_KEY=ваш_секретный_ключ
+AI_MODEL=имя_модели
 ```
 
-Endpoint должен поддерживать `/chat/completions` и structured output `json_schema`. Если выбранная
-модель плохо соблюдает schema, приложение повторит запрос, а затем вернёт явную ошибку.
+Provider должен поддерживать `/chat/completions` и structured JSON output. При временной ошибке,
+невалидном JSON или несовпадении схемы приложение выполнит ограниченное число повторов.
 
-## Telegram workflow Phase 1
+Архитектура не привязана к конкретной модели: новый provider можно добавить без изменения
+`ContentService`, Telegram handlers или видеоредактора.
 
-1. `/start` показывает главное меню.
-2. Нажмите `➕ Новая идея` и отправьте текст.
-3. Бот сохраняет `SourceItem` и показывает три разных подхода.
-4. Выберите `1`, `2` или `3`.
-5. Бот создаёт `ContentIdea`/`ContentDraft` и показывает hook, сценарий, сцены, экранные
-   рекомендации, caption, CTA и длительность.
-6. Доступны `Одобрить`, `Перегенерировать`, `Адаптировать`, `Удалить`.
+## Проверка после запуска
 
-Перегенерация сохраняет предыдущую версию. Адаптация создаёт отдельные drafts для YouTube Shorts,
-TikTok и Telegram.
+Выполняйте команды по порядку.
 
-## Telegram workflow Phase 2
+### API отвечает
 
-- Любой text/voice/audio/video/video note/photo/document вне активного FSM автоматически попадает
-  в Inbox. URL внутри текста определяется отдельно.
-- Bot немедленно подтверждает регистрацию, а download, FFmpeg, STT, document/link extraction и AI
-  enrichment выполняются worker-ом.
-- После READY бот показывает тему, summary, score и рекомендуемые форматы. При недостатке контекста
-  задаётся не более трёх вопросов; ответ можно связать с item текстом или voice.
-- `📥 Контент-инбокс` и `/inbox` показывают фильтры, страницы и карточки. Detail позволяет сделать
-  Short/идеи/TG-пост, дополнить, архивировать или удалить материал.
-- `/search запрос` ищет через PostgreSQL `ILIKE` по topic, summary, transcript, extracted/original text.
-- `/digest` формирует ручную сводку за текущий день.
+```bash
+curl http://localhost:8000/health
+```
 
-## Telegram workflow Phase 3
+### Все контейнеры живы
 
-1. Отправьте video/video note и дождитесь Phase 2 transcript и Content Intelligence.
-2. В карточке источника нажмите `🎬 Short`: LLM предложит три разные монтажные концепции.
-3. Выберите вариант. Backend создаст EditPlan только из реальных STT ranges и покажет количество
-   клипов, длительность, hook, framing и pace.
-4. Нажмите `▶️ Собрать`. Render worker в отдельной очереди создаст H.264/AAC MP4 и отправит preview.
-5. После preview доступны approve, изменение монтажа текстовой инструкцией, прозрачная замена
-   терминов, CLEAN/DYNAMIC/TECH, детерминированная пересборка и архив.
-6. `✂️ Выбрать фрагмент` принимает диапазон `00:45 - 01:23` и создаёт EditPlan без AI.
+```bash
+docker compose ps
+```
 
-Пример сокращённого плана:
+### Посмотреть последние логи
+
+```bash
+docker compose logs --tail=100 api bot worker render-worker
+```
+
+### Проверить Telegram
+
+1. Отправьте `/start`.
+2. Нажмите `➕ Новая идея`.
+3. Напишите короткую техническую мысль.
+4. Убедитесь, что появились три варианта.
+
+### Проверить Inbox
+
+1. Выйдите из активного сценария кнопкой отмены, если он открыт.
+2. Просто отправьте текст или voice без предварительного выбора команды.
+3. Бот должен сразу подтвердить приём.
+4. После фоновой обработки материал появится в `/inbox`.
+
+Whisper-модель скачивается при первом реальном распознавании. Это может занять время и требует
+доступа в интернет, если модель ещё не находится в cache контейнера.
+
+## Telegram-сценарии
+
+### Новая идея — быстрый путь
+
+1. `/start` → `➕ Новая идея`.
+2. Отправьте текст.
+3. Выберите один из трёх разных углов подачи.
+4. Получите `ContentIdea` и сценарий `ContentDraft`.
+5. Одобрите, перегенерируйте, адаптируйте или удалите черновик.
+
+Адаптация создаёт отдельные материалы для YouTube Shorts, TikTok и Telegram.
+
+### Inbox — отправляйте всё подряд
+
+Любой материал вне активного FSM-сценария автоматически становится `SourceItem`:
+
+- текст и URL;
+- voice и обычное audio;
+- video и video note;
+- изображение;
+- `.txt`, `.md` или PDF.
+
+Доступные команды:
+
+- `/inbox` — материалы с фильтрами и пагинацией;
+- `/search запрос` — простой поиск по теме, summary, transcript и исходному тексту;
+- `/digest` — ручная сводка лучших материалов за сегодня.
+
+PDF без текстового слоя сохраняется, но OCR автоматически не запускается. Изображение без vision
+provider также сохраняется и предлагает добавить текстовый комментарий.
+
+### Монтаж Short из видео
+
+1. Откройте обработанное видео в Inbox.
+2. Нажмите `🎬 Short`.
+3. Выберите одну из трёх концепций.
+4. Проверьте длительность и число фрагментов.
+5. Нажмите `▶️ Собрать`.
+6. После получения preview выберите:
+   - `✅ Одобрить`;
+   - `✂️ Монтаж` и напишите инструкцию вроде «оставь только техническую часть»;
+   - `📝 Текст` для прозрачной правки терминов;
+   - `🎨 Стиль` для `CLEAN`, `DYNAMIC` или `TECH`;
+   - `🔄 Пересобрать` без повторного AI-анализа.
+
+Если нужный момент уже известен, ручной режим принимает диапазон вида `00:45 - 01:23` и создаёт
+проект без AI-выбора клипов.
+
+## Как устроен проект
+
+```text
+Telegram Bot ──HTTP── FastAPI ── PostgreSQL
+                         │
+                         ├── Redis → media queue
+                         │             └── download / FFmpeg / Whisper / AI enrichment
+                         │
+                         └── Redis → render queue (concurrency 1)
+                                       └── EditPlan → FFmpeg → MP4 → Telegram preview
+```
+
+Telegram handler выполняет только быструю регистрацию материала и постановку задания. Тяжёлая
+работа идёт в Celery worker-ах, поэтому бот не зависает на время транскрипции или рендера.
+
+### Основные сущности
+
+| Сущность | Что хранит |
+|---|---|
+| `User` | Telegram-пользователя и роль |
+| `Project` | brand context, аудиторию, язык и vocabulary |
+| `SourceItem` | входной материал, статус обработки, transcript и Content Intelligence |
+| `SourceNote` | дополнительный контекст пользователя, связанный с источником |
+| `ContentIdea` | выбранный угол подачи |
+| `ContentDraft` | версии сценариев и адаптаций под платформы |
+| `VideoProject` | состояние монтажа, настройки, EditPlan, preview и итоговый файл |
+
+### Стадии обработки источника
+
+```text
+RECEIVED
+   ↓
+DOWNLOADED
+   ↓
+MEDIA_PREPARED
+   ↓
+TRANSCRIBED / EXTRACTED
+   ↓
+ENRICHED
+   ↓
+READY
+```
+
+При ошибке сохраняются `FAILED`, безопасное описание причины и стадия, на которой она произошла.
+Временные ошибки повторяются ограниченно; повторная доставка Telegram update или Celery task не
+создаёт дубликат.
+
+### Безопасный EditPlan
+
+LLM никогда не генерирует shell-команду или FFmpeg-команду. Он возвращает только данные:
 
 ```json
 {
   "clips": [
-    {"source_start": 12.4, "source_end": 19.8, "source_segment_ids": [4, 5], "purpose": "hook"},
-    {"source_start": 26.1, "source_end": 42.0, "source_segment_ids": [8, 9], "purpose": "main"}
+    {
+      "source_start": 12.4,
+      "source_end": 19.8,
+      "source_segment_ids": [4, 5],
+      "purpose": "hook"
+    },
+    {
+      "source_start": 26.1,
+      "source_end": 42.0,
+      "source_segment_ids": [8, 9],
+      "purpose": "main"
+    }
   ],
   "hook_text": "ДВА ОДИНАКОВЫХ ЗАПРОСА",
-  "emphasis": [{"start": 2.1, "end": 4.2, "text": "два запроса"}],
+  "emphasis": [
+    {"start": 2.1, "end": 4.2, "text": "два запроса"}
+  ],
   "recommended_duration": 23.3,
   "reasoning_summary": "История проблемы и технический вывод",
   "framing": "center_crop",
@@ -190,69 +391,173 @@ TikTok и Telegram.
 }
 ```
 
-`source_segment_ids` обязательны. `CENTER_CROP`, `FIT_BLUR`, `SCREEN_FIT` реализованы через
-`StaticFramingProvider`; `MANUAL` хранит нормализованные x/y/zoom. Face tracking остаётся будущей
-реализацией `FramingProvider`.
+Backend проверяет, что интервалы существуют, пересекаются с указанными STT segments, помещаются
+в исходное видео и не содержат бессмысленно коротких клипов. Текстовые акценты должны реально
+существовать в речи или субтитрах.
 
-Оригиналы сохраняются в `YYYY/MM/UUID/original`; нормализованный WAV — в `processed`. Временные
-FFmpeg-файлы удаляются и при успехе, и при exception. Изображение без vision provider сохраняется
-с dimensions и предлагает добавить комментарий. PDF без text layer фиксируется без запуска OCR.
-
-## REST API
-
-Основные endpoints:
+### Структура репозитория
 
 ```text
-GET  /health
-GET/POST /projects
-GET/POST /sources
-GET  /sources/{id}
-POST /sources/{id}/generate-ideas
-POST /sources/telegram-ingestion
-POST /sources/{id}/enqueue
-POST /sources/{id}/retry
-POST /sources/{id}/notes
-POST /sources/{id}/archive
-POST /sources/{id}/generate-short
-POST /sources/{id}/generate-telegram-post
-POST /sources/{id}/video-projects
-POST /sources/{id}/video-projects/manual
-GET  /video-projects
-GET  /video-projects/{id}
-POST /video-projects/{id}/generate-edit-plan
-POST /video-projects/{id}/regenerate-concepts
-PATCH /video-projects/{id}/edit-plan
-POST /video-projects/{id}/render
-POST /video-projects/{id}/rerender
-POST /video-projects/{id}/style
-PATCH /video-projects/{id}/transcript-overrides
-POST /video-projects/{id}/approve
-POST /video-projects/{id}/archive
-POST /video-projects/{id}/cancel
-GET  /inbox
-GET  /inbox/digest
-GET  /ideas
-GET  /ideas/{id}
-POST /ideas/{id}/generate-draft
-GET  /drafts
-GET  /drafts/{id}
-PATCH /drafts/{id}/status
-POST /drafts/{id}/regenerate
-POST /drafts/{id}/repurpose
-DELETE /drafts/{id}
+app/
+├── ai/                 # provider abstraction и structured prompts
+├── api/routes/         # REST endpoints FastAPI
+├── bot/                # aiogram handlers, FSM, keyboards и whitelist
+├── core/               # настройки и structured logging
+├── db/migrations/      # Alembic migrations и начальный проект Koderevox
+├── models/             # SQLAlchemy entities и enums состояний
+├── schemas/            # Pydantic-контракты API, LLM и EditPlan
+├── services/           # бизнес-логика Inbox, STT, контента и видео
+├── storage/            # LocalStorage и будущая точка расширения под S3
+└── tasks/              # Celery tasks и routing по очередям
+tests/                  # unit, integration и реальный FFmpeg smoke test
 ```
 
-Интерактивные контракты доступны в Swagger/OpenAPI.
+## Настройки
 
-## Миграции
+Все настройки читаются из `.env`. Полный и актуальный список находится в `.env.example`.
+
+### Обязательные для Telegram
+
+| Переменная | Пример | Значение |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | `123:abc...` | секрет от BotFather |
+| `TELEGRAM_ALLOWED_USER_IDS` | `123456789` | кому разрешено пользоваться ботом |
+
+### AI
+
+| Переменная | Значение |
+|---|---|
+| `AI_PROVIDER` | `mock` или `openai_compatible` |
+| `AI_BASE_URL` | адрес API вместе с `/v1` |
+| `AI_API_KEY` | секретный ключ; для LM Studio — любое непустое значение |
+| `AI_MODEL` | точный identifier модели |
+| `AI_TIMEOUT_SECONDS` | timeout одного запроса |
+| `AI_MAX_RETRIES` | число повторов при временной/структурной ошибке |
+
+### Whisper и медиа
+
+| Переменная | По умолчанию | Значение |
+|---|---:|---|
+| `STT_MODEL` | `small` | модель faster-whisper |
+| `STT_DEVICE` | `cpu` | `cpu` или `cuda` |
+| `STT_COMPUTE_TYPE` | `int8` | тип вычислений, например `int8` или `float16` |
+| `MEDIA_ROOT` | `/data/media` | корень хранилища внутри контейнеров |
+| `MAX_MEDIA_SIZE_MB` | `200` | максимальный размер входящего Telegram-файла |
+| `DOCUMENT_MAX_CHARS` | `100000` | предел текста, извлекаемого из документа |
+
+### Ссылки
+
+| Переменная | По умолчанию | Значение |
+|---|---:|---|
+| `LINK_FETCH_TIMEOUT_SECONDS` | `15` | timeout HTTP-запроса |
+| `LINK_MAX_SIZE_MB` | `10` | максимальный размер ответа |
+| `LINK_MAX_REDIRECTS` | `5` | максимум проверяемых redirect |
+
+`LinkProcessor` разрешает только HTTP/HTTPS, отключает environment proxy и проверяет DNS на каждом
+redirect. Блокируются localhost, private, loopback, link-local, multicast, reserved, metadata и
+прочие non-public IPv4/IPv6 адреса.
+
+### Рендер
+
+| Переменная | По умолчанию | Значение |
+|---|---:|---|
+| `VIDEO_WIDTH` / `VIDEO_HEIGHT` | `1080` / `1920` | размер вертикального canvas |
+| `VIDEO_FPS` | `30` | частота кадров |
+| `VIDEO_CRF` | `20` | качество H.264; меньше — качественнее и больше файл |
+| `VIDEO_PRESET` | `medium` | компромисс скорости и сжатия x264 |
+| `VIDEO_MIN_DURATION` | `5` | минимальная длина Short |
+| `VIDEO_MAX_DURATION` | `75` | максимальная длина Short |
+| `CELERY_RENDER_CONCURRENCY` | `1` | сколько тяжёлых рендеров выполнять одновременно |
+| `TELEGRAM_PREVIEW_MAX_SIZE_MB` | `48` | когда создавать сжатый preview |
+| `HOOK_OVERLAY_ENABLED` | `true` | показывать короткий hook overlay |
+
+На домашнем сервере оставьте `CELERY_RENDER_CONCURRENCY=1`, пока не измерите нагрузку CPU и RAM.
+
+### Паузы и звук
+
+| Переменная | По умолчанию | Значение |
+|---|---:|---|
+| `PAUSE_REMOVAL_ENABLED` | `true` | удалять длинную тишину |
+| `PAUSE_MIN_DURATION` | `0.65` | минимальная удаляемая пауза в секундах |
+| `PAUSE_KEEP_PADDING` | `0.12` | сколько оставить вокруг склейки |
+| `PAUSE_NOISE_DB` | `-35` | порог FFmpeg silencedetect |
+| `AUDIO_NORMALIZATION_ENABLED` | `true` | loudness normalization и limiter |
+| `AUDIO_NOISE_REDUCTION_ENABLED` | `false` | дополнительный FFmpeg noise reduction |
+
+Настройки намеренно консервативны: редактор не должен превращать естественную речь в нервную
+TikTok-нарезку.
+
+## Команды администратора
+
+### Запуск и остановка
+
+```bash
+docker compose up -d --build
+docker compose stop
+docker compose start
+docker compose down
+```
+
+`docker compose down` удаляет контейнеры и сеть, но не named volumes. Не добавляйте `-v`, если не
+хотите удалить базу, Redis data и сохранённые медиа.
+
+### Логи
+
+```bash
+docker compose logs -f bot
+docker compose logs -f worker
+docker compose logs -f render-worker
+docker compose logs --tail=200 api
+```
+
+### Обновление кода
+
+Перед обновлением сделайте резервную копию важных данных. Затем:
+
+```bash
+git pull --ff-only
+docker compose up -d --build
+```
+
+API автоматически применяет новые Alembic migrations перед стартом.
+
+### Миграции вручную
 
 ```bash
 docker compose exec api alembic current
 docker compose exec api alembic upgrade head
-docker compose exec api alembic revision --autogenerate -m "describe change"
 ```
 
-## Локальная разработка
+### Где лежат данные
+
+Docker Compose использует named volumes:
+
+- `postgres_data` — PostgreSQL;
+- `redis_data` — очередь и результаты задач;
+- `media_data` — оригиналы, обработанные файлы и готовые ролики.
+
+Оригинальные медиа не удаляются автоматически. Временные WAV, клипы, ASS и concat-файлы хранятся
+в отдельном workspace проекта и очищаются через `try/finally` после успеха или ошибки.
+
+## REST API
+
+Интерактивная документация всегда доступна на `/docs`. Основные группы endpoints:
+
+```text
+/projects                 проекты и brand context
+/sources                  входящие материалы и генерация контента
+/inbox                    список, фильтры, поиск и digest
+/ideas                    content angles
+/drafts                   сценарии и адаптации
+/video-projects           EditPlan, render, style, approve и archive
+```
+
+Backend самодостаточен: Telegram является интерфейсом, а не местом бизнес-логики. В будущем n8n,
+web-панель или другой клиент смогут вызывать то же REST API.
+
+## Разработка и тесты
+
+Нужен Python 3.12+ и системный FFmpeg.
 
 ```bash
 python3.12 -m venv .venv
@@ -263,38 +568,142 @@ python3.12 -m venv .venv
 .venv/bin/mypy app
 ```
 
-Media worker слушает `default,media`; отдельный `render-worker` слушает только `render`. Для
-домашнего CPU оставьте `CELERY_RENDER_CONCURRENCY=1`. Увеличивайте значение только после измерения
-RAM/CPU и `render_duration` в `VideoProject.metrics`.
+Тесты покрывают ContentService, structured LLM output, permissions, ingestion, idempotency,
+обработку media/document/link, SSRF, Content Intelligence, Inbox, EditPlan, pause detection,
+субтитры, renderer, API и Telegram workflow. Отдельный smoke test создаёт настоящее видео через
+FFmpeg, собирает вертикальный MP4 и проверяет его через ffprobe.
 
-## Субтитры, vocabulary и шрифты
+### Очереди Celery
 
-faster-whisper запускается с `word_timestamps=True`; words хранятся внутри существующего JSONB
-segments. Для старого item с segment timestamps SubtitleService безопасно распределяет слова
-внутри segment. Оригинальный transcript не меняется: исправления (`REST`, `SQL`, названия проектов)
-сохраняются в `VideoProject.transcript_overrides`, не затрагивая время.
+- `default,media` обслуживает обычный `worker`;
+- `render` обслуживает отдельный `render-worker`;
+- ingestion и render tasks идемпотентны;
+- число повторов ограничено;
+- тяжёлый encode не блокирует короткие задачи.
 
-Образ содержит свободный DejaVu Sans (`fonts-dejavu-core`). Чтобы использовать собственный
-лицензированный шрифт, смонтируйте каталог read-only в `render-worker`, например `/data/fonts`, и
-задайте `VIDEO_FONT_PATH=/data/fonts/MyFont.ttf`. Коммерческие шрифты в репозиторий не добавляются.
+### Шрифты и vocabulary
 
-`STT_DEVICE=cuda` и подходящий `STT_COMPUTE_TYPE` поддерживаются adapter-ом, но Docker host должен
-иметь NVIDIA Container Toolkit, совместимые CUDA-библиотеки и явный GPU mapping в Compose.
+Docker image содержит свободный DejaVu Sans. Для своего лицензированного шрифта смонтируйте файл
+read-only и задайте:
 
-## Безопасность URL
+```dotenv
+VIDEO_FONT_PATH=/data/fonts/MyFont.ttf
+```
 
-`LinkProcessor` разрешает только HTTP/HTTPS, отключает environment proxies и автоматические
-redirects, проверяет DNS перед каждым запросом и каждый redirect. Блокируются localhost, private,
-loopback, link-local, multicast, reserved и прочие non-public IPv4/IPv6 адреса, включая metadata
-endpoints. HTML ограничен по размеру и очищается от script/style/nav/footer boilerplate.
+Коммерческие шрифты не входят в репозиторий.
 
-## Границы Phase 3
+Project vocabulary используется при транскрипции и подготовке субтитров. Исправления вроде
+`Rest → REST` или `Реакт нейтив → React Native` сохраняются отдельно от оригинальной
+транскрипции и не меняют timestamps.
 
-Face tracking, web timeline, multi-camera, музыка, AI/stock B-roll, motion graphics, thumbnails,
-publishing и scheduler не реализованы. Cancel state и API предусмотрены, но запущенный FFmpeg MVP
-останавливается только между стадиями, а не сигналом посреди encode. `OverlayAsset` уже описывает
-будущие image/video/screen/code/screenshot inserts; renderer abstraction допускает будущий Remotion,
-но Node.js stack не добавлен: текущие layout/subtitle задачи надёжно решаются FFmpeg и ASS.
+## Частые проблемы
 
-Для Phase 4 сохранены original video, extracted audio, segment/word timestamps, ContentDraft,
-validated EditPlan, transcript overrides, framing/style/settings, debug frames и approved MP4.
+### Бот молчит
+
+Проверьте:
+
+```bash
+docker compose ps
+docker compose logs --tail=200 bot api
+```
+
+Обычно причина — неправильный `TELEGRAM_BOT_TOKEN`, отсутствующий user ID в whitelist или
+недоступный API.
+
+### Бот отвечает `Access denied`
+
+Добавьте свой числовой ID в `TELEGRAM_ALLOWED_USER_IDS` и перезапустите bot:
+
+```bash
+docker compose up -d --force-recreate bot
+```
+
+### Материал остаётся в PROCESSING
+
+Проверьте Redis и media worker:
+
+```bash
+docker compose ps redis worker
+docker compose logs --tail=200 worker redis
+```
+
+### LM Studio не отвечает
+
+- Убедитесь, что Local Server действительно запущен.
+- Проверьте точное имя модели.
+- Разрешите подключения не только с `localhost`, если LM Studio работает вне Docker.
+- Проверьте `AI_BASE_URL` из контейнера API.
+
+### Whisper долго запускается
+
+Первый запуск скачивает модель. На слабом CPU используйте:
+
+```dotenv
+STT_MODEL=small
+STT_DEVICE=cpu
+STT_COMPUTE_TYPE=int8
+```
+
+Для `cuda` нужны совместимые NVIDIA drivers, NVIDIA Container Toolkit, CUDA-библиотеки и GPU
+mapping в Docker Compose. Одного значения `STT_DEVICE=cuda` недостаточно.
+
+### Рендер слишком тяжёлый
+
+- Оставьте `CELERY_RENDER_CONCURRENCY=1`.
+- Увеличьте `VIDEO_CRF` до `22–24`, если допустимо чуть меньшее качество.
+- Используйте более быстрый `VIDEO_PRESET`, понимая компромисс размера и качества.
+- Посмотрите `render_duration`, `output_size` и другие metrics в `VideoProject`.
+
+### Видео технически готово, но выглядит плохо
+
+Попробуйте другой framing:
+
+- `CENTER_CROP` — talking head по центру;
+- `FIT_BLUR` — весь горизонтальный кадр на размытой подложке;
+- `SCREEN_FIT` — сохранить интерфейс или код записи экрана.
+
+Затем выберите другой subtitle preset и пересоберите тот же EditPlan.
+
+## Ограничения
+
+Сейчас намеренно не реализованы:
+
+- публикация в YouTube, TikTok и Telegram-каналы;
+- scheduler и social analytics;
+- web dashboard и полноценный timeline editor;
+- face tracking и multi-camera монтаж;
+- AI/stock B-roll, музыка, thumbnails и сложная motion graphics;
+- OCR сканированных PDF;
+- vector database и semantic search;
+- S3/MinIO backend.
+
+`CANCEL_REQUESTED` предусмотрен в модели, но текущий MVP гарантированно проверяет отмену между
+этапами, а не посылает сигнал уже работающему FFmpeg в середине encode.
+
+Архитектура уже сохраняет исходное видео, извлечённое аудио, timestamps слов, ContentDraft,
+validated EditPlan, overrides, framing, render settings, debug frames и approved MP4. Это база для
+следующего этапа: B-roll, скриншоты, screen recordings, изображения и brand templates.
+
+## Безопасность и приватность
+
+- Секреты читаются из `.env`, который исключён из Git.
+- Telegram доступен только user ID из whitelist.
+- API keys не выводятся в structured logs.
+- Media blobs не хранятся в PostgreSQL.
+- Video/audio bytes не передаются в LLM.
+- URL проходят DNS- и redirect-проверки против SSRF.
+- Пользовательские имена файлов не используются как доверенные storage paths.
+
+Если вы публикуете сервер в интернете, дополнительно настройте firewall, TLS reverse proxy,
+резервное копирование PostgreSQL/media и ограничение доступа к Swagger/API.
+
+## Лицензия
+
+Copyright © 2026 NarKomaRick. All Rights Reserved.
+
+Репозиторий публичный для просмотра исходного кода, но не является open-source проектом. Права на
+копирование, изменение, распространение, перепродажу, размещение производного сервиса и иное
+использование без отдельного письменного разрешения не предоставляются. Полные условия находятся
+в файле [LICENSE](LICENSE).
+
+По вопросам разрешения на использование обращайтесь к владельцу репозитория через GitHub.
