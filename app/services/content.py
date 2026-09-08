@@ -11,6 +11,7 @@ from app.ai.prompts.idea_generator import build_idea_prompt
 from app.ai.prompts.repurpose import build_repurpose_prompt
 from app.ai.prompts.short_script import build_short_script_prompt
 from app.ai.prompts.system import build_system_prompt
+from app.core.config import get_settings
 from app.models import ContentDraft, ContentIdea, Project, SourceItem, SourceNote, User
 from app.models.enums import (
     ContentFormat,
@@ -36,7 +37,9 @@ class ContentService:
         return (await self.session.scalars(select(Project).order_by(Project.name))).all()
 
     async def create_project(self, data: ProjectCreate) -> Project:
-        project = Project(**data.model_dump())
+        values = data.model_dump()
+        values["timezone"] = data.timezone or get_settings().default_timezone
+        project = Project(**values)
         self.session.add(project)
         await self.session.commit()
         await self.session.refresh(project)
@@ -56,13 +59,16 @@ class ContentService:
             select(User).where(User.telegram_id == data.telegram_user_id)
         )
         if user is None:
+            owner_id = get_settings().initial_owner_telegram_id
             user = User(
                 telegram_id=data.telegram_user_id,
                 username=data.telegram_username,
-                role=UserRole.ADMIN,
+                role=UserRole.OWNER if owner_id == data.telegram_user_id else UserRole.ADMIN,
             )
             self.session.add(user)
             await self.session.flush()
+        elif get_settings().initial_owner_telegram_id == data.telegram_user_id:
+            user.role = UserRole.OWNER
         elif data.telegram_username and user.username != data.telegram_username:
             user.username = data.telegram_username
 

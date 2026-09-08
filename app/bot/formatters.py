@@ -1,5 +1,18 @@
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+
+def format_production(project: dict[str, Any]) -> str:
+    script = project.get("approved_script_version_id") or project.get("current_script_version_id")
+    return (
+        f"🎬 {project.get('working_title') or project.get('title')}\n\n"
+        f"Статус:\n{str(project.get('status', 'idea')).upper()}\n\n"
+        f"Сценарий:\n{'✅' if project.get('approved_script_version_id') else '⚪'} "
+        f"{str(script)[:8] if script else 'не создан'}\n\n"
+        f"Озвучка:\n{'✅' if project.get('primary_voiceover_id') else '⚪ не загружена'}\n\n"
+        f"Монтаж:\n{'✅' if project.get('active_timeline_revision_id') else '⚪ не создан'}"
+    )
 
 
 def format_angles(ideas: list[dict[str, Any]]) -> str:
@@ -137,3 +150,61 @@ def format_video_edit(project: dict[str, Any]) -> str:
         f"Длина: {duration:.1f} сек\n"
         f"Клипов: {len(clips)}"
     )
+
+
+def format_publication_preview(variants: list[dict[str, Any]]) -> str:
+    labels = {"telegram": "Telegram", "youtube": "YouTube", "tiktok": "TikTok"}
+    chunks = ["Готово к публикации. Тексты сохранены и не изменятся при запуске."]
+    for item in variants:
+        platform = labels.get(item["platform"], item["platform"])
+        text = item.get("caption") or item.get("description") or "—"
+        tags = " ".join(f"#{tag}" for tag in item.get("hashtags", []))
+        settings = item.get("settings", {})
+        platform_settings = ""
+        if item["platform"] == "tiktok":
+            platform_settings = (
+                f"\nVisibility: {settings.get('privacy_level', 'не выбрана')}"
+                f" · comments {'Off' if settings.get('disable_comment') else 'On'}"
+                f" · duet {'Off' if settings.get('disable_duet') else 'On'}"
+                f" · stitch {'Off' if settings.get('disable_stitch') else 'On'}"
+            )
+        chunks.append(
+            f"\n{platform}\n{item.get('title') or '—'}\n{text}\n{tags}{platform_settings}".strip()
+        )
+    return "\n".join(chunks)
+
+
+def format_publications(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "📅 Очередь публикаций пуста."
+    icons = {
+        "draft": "📝",
+        "scheduled": "🕓",
+        "queued": "⏳",
+        "publishing": "🚀",
+        "processing": "⏳",
+        "published": "✅",
+        "published_with_warning": "⚠️",
+        "retry_wait": "🔄",
+        "failed": "❌",
+        "cancelled": "🚫",
+    }
+    lines = ["📅 Публикации"]
+    for item in items[:20]:
+        snapshot = item.get("variant_snapshot", {})
+        scheduled = item.get("scheduled_at")
+        timezone_name = item.get("publication_metadata", {}).get("timezone", "UTC")
+        try:
+            timezone = ZoneInfo(timezone_name)
+        except ZoneInfoNotFoundError:
+            timezone = ZoneInfo("UTC")
+        when = (
+            datetime.fromisoformat(scheduled).astimezone(timezone).strftime("%d.%m %H:%M")
+            if scheduled
+            else "сейчас"
+        )
+        lines.append(
+            f"\n{icons.get(item['status'], '•')} {snapshot.get('title') or 'Без названия'}\n"
+            f"{item['platform']} · {when} · {item['status']}\nID: {item['id']}"
+        )
+    return "\n".join(lines)

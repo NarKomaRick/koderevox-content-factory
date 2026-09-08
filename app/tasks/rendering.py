@@ -7,8 +7,11 @@ from app.core.config import get_settings
 from app.db.session import SessionFactory
 from app.models import SourceItem, User, VideoProject
 from app.services.errors import TemporaryProcessingError
+from app.services.platform_variant_media import PlatformVariantMediaService
 from app.services.preview_delivery import PreviewDeliveryService
+from app.services.production_rendering import ProductionRenderService
 from app.services.rendering_factory import create_render_service
+from app.services.runtime_settings import SettingsService
 from app.services.video_editor import FFmpegVideoEditor
 from app.storage.local import LocalStorage
 from app.tasks.celery_app import celery_app
@@ -17,9 +20,25 @@ from app.tasks.processing import run_async
 logger = structlog.get_logger()
 
 
+async def render_production_once(production_project_id: uuid.UUID, profile: str) -> VideoProject:
+    settings = get_settings()
+    async with SessionFactory() as session:
+        settings = await SettingsService(session, settings).resolved()
+        return await ProductionRenderService(
+            session, LocalStorage(settings.media_root), settings
+        ).render(production_project_id, profile_name=profile)
+
+
+@celery_app.task(name="content_factory.render_production", max_retries=1)
+def render_production_task(production_project_id: str, profile: str = "preview") -> str:
+    project = run_async(render_production_once(uuid.UUID(production_project_id), profile))
+    return str(project.id)
+
+
 async def render_video_once(video_project_id: uuid.UUID, fingerprint: str) -> VideoProject:
     settings = get_settings()
     async with SessionFactory() as session:
+        settings = await SettingsService(session, settings).resolved()
         return await create_render_service(session, settings).render(video_project_id, fingerprint)
 
 
@@ -74,4 +93,25 @@ def render_video_task(task: Task, video_project_id: str, fingerprint: str) -> st
     except Exception:
         logger.exception("video_preview_notification_failed", video_project_id=video_project_id)
     logger.info("video_render_task_completed", video_project_id=video_project_id)
+    return project.status.value
+
+
+async def render_platform_variant_once(
+    video_project_id: uuid.UUID, fingerprint: str, variant_id: uuid.UUID
+) -> VideoProject:
+    project = await render_video_once(video_project_id, fingerprint)
+    async with SessionFactory() as session:
+        await PlatformVariantMediaService(session).attach_rendered(variant_id, video_project_id)
+    return project
+
+
+@celery_app.task(name="content_factory.render_platform_variant", max_retries=1)
+def render_platform_variant_task(
+    task: Task, video_project_id: str, fingerprint: str, variant_id: str
+) -> str:
+    project = run_async(
+        render_platform_variant_once(
+            uuid.UUID(video_project_id), fingerprint, uuid.UUID(variant_id)
+        )
+    )
     return project.status.value

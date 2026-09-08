@@ -6,13 +6,17 @@ from typing import Any
 
 import structlog
 from celery import Task  # type: ignore[import-untyped]
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.db.session import SessionFactory
-from app.models import SourceItem, User
+from app.models import ProductionMaterial, ProductionProject, SourceItem, User, VisualAsset
 from app.services.errors import PermanentProcessingError, TemporaryProcessingError
 from app.services.notifier import TelegramNotifier
 from app.services.processing_factory import create_processing_service
+from app.services.production_timeline import AutoAssemblyService
+from app.services.runtime_settings import SettingsService
+from app.services.voiceovers import VoiceoverService
 from app.tasks.celery_app import celery_app
 
 logger = structlog.get_logger()
@@ -31,9 +35,43 @@ def run_async[ResultT](coroutine: Coroutine[Any, Any, ResultT]) -> ResultT:
 async def process_source_once(source_id: uuid.UUID) -> SourceItem:
     settings = get_settings()
     async with SessionFactory() as session:
+        settings = await SettingsService(session, settings).resolved()
         service = create_processing_service(session, settings)
         try:
-            return await service.process(source_id)
+            source = await service.process(source_id)
+            material = await session.scalar(
+                select(ProductionMaterial).where(ProductionMaterial.source_item_id == source.id)
+            )
+            if material:
+                asset = await session.scalar(
+                    select(VisualAsset).where(VisualAsset.source_item_id == source.id)
+                )
+                if asset:
+                    material.asset_id = asset.id
+                    await session.commit()
+                if "voiceover" in material.roles:
+                    await VoiceoverService(session).create_from_processed_source(
+                        material.production_project_id, source.id
+                    )
+                elif material.user_instruction and asset:
+                    production = await session.get(
+                        ProductionProject, material.production_project_id
+                    )
+                    if production and production.active_timeline_revision_id:
+                        placement, revision = await AutoAssemblyService(
+                            session, settings
+                        ).insert_locked(production.id, material.id, material.user_instruction)
+                        if placement.status == "ambiguous" and revision is None:
+                            notifier = TelegramNotifier(settings.telegram_bot_token)
+                            try:
+                                await notifier.placement_candidates(
+                                    source.telegram_chat_id or 0,
+                                    material.id,
+                                    [item.model_dump() for item in placement.candidates],
+                                )
+                            finally:
+                                await notifier.aclose()
+            return source
         finally:
             await service.aclose()
 
@@ -41,6 +79,7 @@ async def process_source_once(source_id: uuid.UUID) -> SourceItem:
 async def process_note_once(note_id: uuid.UUID) -> SourceItem:
     settings = get_settings()
     async with SessionFactory() as session:
+        settings = await SettingsService(session, settings).resolved()
         service = create_processing_service(session, settings)
         try:
             return await service.process_voice_note(note_id)

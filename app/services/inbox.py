@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models import ContentIdea, Project, SourceItem, SourceNote, User
 from app.models.enums import ProcessingStage, SourceStatus, SourceType, UserRole
 from app.schemas.api import DailyDigest, InboxPage, SourceCreate, SourceNoteCreate
@@ -230,10 +231,14 @@ class InboxService:
 
     async def _get_or_create_user(self, telegram_id: int, username: str | None) -> User:
         user = await self.session.scalar(select(User).where(User.telegram_id == telegram_id))
+        owner_id = get_settings().initial_owner_telegram_id
         if user is None:
-            user = User(telegram_id=telegram_id, username=username, role=UserRole.ADMIN)
+            role = UserRole.OWNER if owner_id == telegram_id else UserRole.ADMIN
+            user = User(telegram_id=telegram_id, username=username, role=role)
             self.session.add(user)
             await self.session.flush()
+        elif owner_id == telegram_id and user.role != UserRole.OWNER:
+            user.role = UserRole.OWNER
         elif username and user.username != username:
             user.username = username
         return user

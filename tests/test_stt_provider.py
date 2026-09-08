@@ -24,7 +24,8 @@ class FakeWordWhisperModel:
         assert word_timestamps is True
         assert initial_prompt == "Koderevox, REST API"
         word = SimpleNamespace(word=" REST API ", start=0.2, end=0.9)
-        segment = SimpleNamespace(start=0.0, end=1.0, text=" REST API ", words=[word])
+        invalid = SimpleNamespace(word=" glitch ", start=0.9, end=0.9)
+        segment = SimpleNamespace(start=0.0, end=1.0, text=" REST API ", words=[word, invalid])
         return [segment], SimpleNamespace(language="ru", duration=1.0)
 
 
@@ -48,3 +49,4 @@ async def test_faster_whisper_preserves_word_timestamps_and_uses_vocabulary() ->
 
     assert result.segments[0].words[0].word == "REST API"
     assert result.segments[0].words[0].start == 0.2
+    assert len(result.segments[0].words) == 1

@@ -29,3 +29,9 @@ class MusicProvider(Protocol):
     """Extension point for explicitly selected, licensed local background audio."""
 
     async def resolve(self, asset_id: str) -> Path: ...
+
+
+class ResearchProvider(Protocol):
+    """Optional evidence retrieval; the production workflow remains usable offline."""
+
+    async def search(self, query: str, *, limit: int = 5) -> list[dict[str, str]]: ...

@@ -5,7 +5,9 @@ Self-hosted система, которая превращает Telegram в ли
 
 Вы отправляете боту мысль, голосовое, ссылку, документ или видео. Система сохраняет оригинал,
 извлекает смысл, предлагает идеи и сценарии, а из видео умеет собрать вертикальный Short с
-монтажом, нормализованным звуком и субтитрами. Финальное решение всегда остаётся за человеком.
+монтажом, нормализованным звуком и субтитрами. Одобренный ролик можно сразу
+опубликовать или поставить в расписание Telegram, YouTube и TikTok. Финальное решение
+всегда остаётся за человеком.
 
 > Проект можно развернуть на собственном Debian/Linux-сервере. Исходные медиа хранятся у вас,
 > а не в стороннем облачном хранилище.
@@ -63,6 +65,15 @@ Self-hosted система, которая превращает Telegram в ли
 - Отправляет preview в Telegram и позволяет одобрить или пересобрать ролик.
 - Сохраняет один и тот же `EditPlan` при обычном rerender — монтаж не меняется случайно.
 
+### Публикации
+
+- Создаёт разные `PlatformVariant` текстов и настроек для Telegram, YouTube и TikTok.
+- Показывает preview до schedule; одобренный текст не меняется при отправке.
+- Публикует сейчас или по UTC-расписанию с настраиваемым timezone проекта.
+- Ведёт независимые `Publication`, attempts/events и санитизированные ошибки.
+- Защищает от двойной публикации при concurrent scheduler-ах и повторной доставке Celery task.
+- Использует Telegram Bot API, resumable YouTube upload и TikTok FILE_UPLOAD/status/webhook.
+
 ## Как это выглядит для пользователя
 
 ### Из голосовой мысли в сценарий
@@ -101,6 +112,18 @@ Render worker собирает ролик через FFmpeg
 
 Видео и аудио не отправляются в LLM. AI получает только транскрипцию, безопасные метаданные,
 Content Intelligence и добавленный пользователем контекст.
+
+### Из approved Short в публикацию
+
+```text
+Approved Video → 📤 Опубликовать → выбор площадок
+       ↓
+Telegram / YouTube / TikTok preview → правка текстов и настроек
+       ↓
+🚀 Сейчас или 📅 сегодня / завтра / дата и время
+       ↓
+DB scheduler → publish worker → provider → remote ID/status → сводка в Telegram
+```
 
 ## Запуск за 10 минут
 
@@ -161,7 +184,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Нужно увидеть шесть сервисов:
+Нужно увидеть восемь сервисов:
 
 | Сервис | Зачем он нужен |
 |---|---|
@@ -171,6 +194,8 @@ docker compose ps
 | `bot` | Telegram-интерфейс |
 | `worker` | загрузка, извлечение текста, Whisper и Content Intelligence |
 | `render-worker` | тяжёлый FFmpeg-рендер; по умолчанию только один одновременно |
+| `publish-worker` | отдельная очередь upload/status для внешних площадок |
+| `publish-scheduler` | единственный lightweight DB scheduler для due/retry/polling jobs |
 
 Затем откройте:
 
@@ -323,6 +348,13 @@ Telegram Bot ──HTTP── FastAPI ── PostgreSQL
                          │
                          └── Redis → render queue (concurrency 1)
                                        └── EditPlan → FFmpeg → MP4 → Telegram preview
+
+Approved Content → PublishPackage → frozen PlatformVariant → Publication
+                                                       ↓
+PostgreSQL scheduler → publish queue → PublicationService → PublisherRegistry
+                                                       ├── TelegramPublisher
+                                                       ├── YouTubePublisher
+                                                       └── TikTokPublisher
 ```
 
 Telegram handler выполняет только быструю регистрацию материала и постановку задания. Тяжёлая
@@ -339,6 +371,12 @@ Telegram handler выполняет только быструю регистра
 | `ContentIdea` | выбранный угол подачи |
 | `ContentDraft` | версии сценариев и адаптаций под платформы |
 | `VideoProject` | состояние монтажа, настройки, EditPlan, preview и итоговый файл |
+| `PublishPackage` | master media/text и агрегированный статус пакета |
+| `PlatformVariant` | platform-specific text/settings/media profile, revision и content hash |
+| `PlatformAccount` | канал/аккаунт и capabilities без credentials |
+| `Publication` | замороженный input, schedule, state, remote ID/URL и media SHA-256 |
+| `PublicationAttempt` / `PublicationEvent` | история attempts и audit trail переходов |
+| `EncryptedCredential` / `OAuthState` | Fernet-encrypted tokens и one-time hashed OAuth state |
 
 ### Стадии обработки источника
 
@@ -487,6 +525,21 @@ redirect. Блокируются localhost, private, loopback, link-local, multi
 Настройки намеренно консервативны: редактор не должен превращать естественную речь в нервную
 TikTok-нарезку.
 
+### Publishing и OAuth
+
+| Переменная | Значение |
+|---|---|
+| `DEFAULT_TIMEZONE` | fallback IANA timezone нового Project; schedule в БД всегда UTC |
+| `TELEGRAM_PUBLISH_BOT_TOKEN` | optional отдельный bot token для channel publishing |
+| `CREDENTIAL_ENCRYPTION_KEY` | Fernet key для encrypted OAuth storage |
+| `PUBLISH_SCHEDULER_INTERVAL_SECONDS` | интервал DB scan |
+| `PUBLISH_MAX_ATTEMPTS` / `PUBLISH_RETRY_DELAYS_SECONDS` | retry ceiling и backoff с jitter |
+| `CELERY_PUBLISH_CONCURRENCY` | concurrency отдельного publish-worker |
+| `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REDIRECT_URI` | YouTube OAuth 2 |
+| `TIKTOK_CLIENT_KEY`, `TIKTOK_CLIENT_SECRET`, `TIKTOK_REDIRECT_URI` | TikTok OAuth |
+
+Redirect URI берётся только из config. API не принимает произвольный callback URL от клиента.
+
 ## Команды администратора
 
 ### Запуск и остановка
@@ -507,6 +560,7 @@ docker compose down
 docker compose logs -f bot
 docker compose logs -f worker
 docker compose logs -f render-worker
+docker compose logs -f publish-worker publish-scheduler
 docker compose logs --tail=200 api
 ```
 
@@ -552,6 +606,11 @@ Docker Compose использует named volumes:
 /video-projects           EditPlan, render, style, approve и archive
 /assets                   VisualAsset library, metadata search и explicit vision analysis
 /thumbnail-projects       три concepts, render previews и выбор обложки
+/publish-packages         master packages и platform variants
+/platform-accounts        аккаунты/capabilities без plaintext credentials
+/publications             preview, schedule, publish now, cancel, retry и history
+/oauth/{platform}         OAuth start/callback с one-time state
+/webhooks/tiktok          signed idempotent status events
 ```
 
 Ключевые Phase 4 mutations: `POST /assets` (multipart upload), `POST /assets/from-source`,
@@ -582,6 +641,34 @@ python3.12 -m venv .venv
 FFmpeg, собирает вертикальный MP4 и проверяет его через ffprobe. Phase 4 smoke дополнительно
 композитит screenshot, PiP, screen recording и code card, извлекает пять контрольных кадров и
 проверяет фактические изменения пикселей. Thumbnail smoke создаёт настоящий JPEG 1280×720.
+Phase 5 tests покрывают scheduler races, duplicate delivery, freeze/hash, retry taxonomy, encrypted
+credentials/OAuth state, Telegram calls, resumable YouTube upload, TikTok capabilities/upload/status/webhook
+и полный multi-platform mock E2E.
+
+## Phase 5: Publishing
+
+State machine одной `Publication`:
+
+```text
+DRAFT → SCHEDULED → QUEUED → PUBLISHING → PUBLISHED
+                    │             └→ PROCESSING → PUBLISHED / FAILED
+                    └→ CANCELLED
+PUBLISHING / PROCESSING → RETRY_WAIT → QUEUED
+FAILED → QUEUED (ручной retry той же Publication)
+```
+
+`PublicationService` владеет transitions, attempts, results и retry policy. Publisher только
+валидирует, отправляет и читает remote status. Due rows claim-ятся транзакционно
+через `FOR UPDATE SKIP LOCKED`; worker до external call делает conditional DB claim. `remote_id`
+блокирует повторный upload. Неопределённый crash во время external call не повторяется
+слепо: запись получает `AMBIGUOUS_PROVIDER_STATE` для ручной проверки.
+
+Scheduled post хранит snapshot/revision/content hash варианта и SHA-256 media. Поздние
+изменения master-ролика на него не влияют. TikTok-clean derivative переиспользует
+тот же `EditPlan`/`VisualPlan`, отключая branding/watermark без повторного AI-анализа.
+
+Retryable errors: network, timeout, rate limit и provider 5xx. Auth, permission, invalid
+media/metadata и policy rejection не повторяются автоматически. Backoff ограничен и добавляет jitter.
 
 ## Phase 4: Visual Intelligence
 
@@ -649,6 +736,174 @@ VIDEO_FONT_PATH=/data/fonts/MyFont.ttf
 Project vocabulary используется при транскрипции и подготовке субтитров. Исправления вроде
 `Rest → REST` или `Реакт нейтив → React Native` сохраняются отдельно от оригинальной
 транскрипции и не меняют timestamps.
+
+## Snowball Production Workspace (Phase 4.5)
+
+`ProductionProject` — контейнер всего жизненного цикла одного будущего ролика. Он находится
+уровнем выше старого `VideoProject`: первый хранит идею, знания, версии сценария, озвучку,
+материалы и активную revision монтажа, второй по-прежнему отвечает за render/output и остаётся
+совместимым с прежним workflow `source video → Short`.
+
+Главный сценарий теперь начинается в Telegram:
+
+```text
+🎬 Новый ролик → идея → Script v1 → правки → approve
+→ финальная озвучка → STT/alignment → rough cut
+→ новый мем/footage → semantic locked insertion → локальная revision
+→ preview → final MP4
+```
+
+Кнопка `📂 Мои ролики` открывает долговечные проекты из PostgreSQL. FSM хранит лишь текущий
+экран: связь каждого материала с роликом записывается в `production_materials`, поэтому она не
+теряется при рестарте bot worker. Отправленные внутри ролика text, URL, voice, audio, photo,
+video, video note и document идут через существующий ingestion pipeline и не становятся
+отдельной идеей автоматически.
+
+### ScriptVersion и факты
+
+Сценарий append-only: v1, natural-language edit и каждая следующая правка создают новую строку
+`ScriptVersion`. `current_script_version_id` можно переключить на старую версию, история не
+удаляется. Diff рассчитывается локально через `difflib`: сохраняются добавленные/удалённые
+фрагменты, similarity и короткая сводка. `✅ Утвердить` ставит `approved_at`, записывает
+`approved_script_version_id` и переводит ролик в `READY_FOR_VOICEOVER`; к сценарию после этого
+можно вернуться и создать новую версию.
+
+`ProductionFact` отделяет `PROPOSED` от `VERIFIED` и `USER_CONFIRMED`. AI не может сам вызвать
+user confirmation. `ProductionContextBuilder` всегда выдаёт две разные коллекции — подтверждённые
+факты и `proposed_not_factual` — вместе с initial idea, SourceItem/SourceNote intelligence,
+актуальным/approved script, attached assets и persistent instructions. Таким образом LLM получает
+ограниченный нормализованный snapshot, а не случайную историю Telegram.
+Внешний web research не обязателен: объявлен `ResearchProvider` extension point, а основной flow
+полностью работает на прикреплённых пользователем источниках без интернета.
+
+### Production Materials и Asset Library
+
+`ProductionMaterial` — join к существующим `SourceItem` или `VisualAsset`, а не вторая библиотека.
+Роли: `VOICEOVER`, `FOOTAGE`, `BROLL`, `SCREEN_RECORDING`, `SCREENSHOT`, `MEME`, `IMAGE`, `CODE`,
+`REFERENCE`, `FACT_SOURCE`, `MUSIC`, `OTHER`. После media processing worker связывает созданный
+Asset Library item с production relation. Флаги `is_used` и materials view показывают, что реально
+вошло в монтаж, а что осталось неиспользованным.
+
+`AssetCandidateRetriever` сначала ограничивает каталог текущим `ProductionProject`, ранжирует
+title/description/tags/extracted text и отдаёт только top N. Auto assembly не обязано использовать
+каждый файл. При отсутствии хорошего настоящего visual разрешён минимальный technical text card.
+
+### VoiceoverTrack и semantic timeline
+
+Озвучка принимает MP3/WAV/OGG/M4A и Telegram voice через прежний `SourceProcessingService`:
+original сохраняется, FFmpeg создаёт processed WAV с консервативной loudness normalization,
+опциональным noise reduction и limiter, затем faster-whisper сохраняет segments и word timestamps.
+Некорректные нулевые word ranges отдельных Whisper adapters безопасно отбрасываются, не разрушая
+весь segment.
+
+`VoiceoverTrack.duration` становится единственным master duration. `ScriptVoiceAligner` монотонно
+сопоставляет structured script sections с реальными STT words через token/character similarity и
+fuzzy spans. Перефразирование допустимо, missing/extra speech сохраняются отдельно, у каждого
+диапазона и всего alignment есть confidence. Даже деградировавший STT создаёт низкоуверенный,
+но валидный timeline вместо падения.
+
+Субтитры строятся только по `VoiceoverTrack.segments/words`; timestamps сценария не выдумываются.
+Approved script применяется консервативно для известных терминов (`рест апи → REST API`), только
+если canonical spelling действительно есть в утверждённом тексте. Не произнесённые фразы не
+добавляются.
+
+### ProductionTimeline, locked items и incremental replan
+
+`TimelineRevision.timeline_json` содержит tracks `AUDIO_MASTER`, `VIDEO_BASE`, `BROLL`, `OVERLAY`,
+`TEXT`, `SUBTITLES`, `MUSIC`. Каждый item имеет точные `start/end`, `asset_id`, layout, optional
+`source_start/source_end`, metadata и `locked_by_user`. Voiceover-only render не требует
+`VIDEO_BASE`; screen recording/footage по умолчанию muted и обрезается до нужного блока.
+
+`SemanticPlacementService` понимает, например, «когда говорю про 1С» и «после фразы про двойной
+запрос». Он ищет одновременно по aligned spoken text и script section. Высокоуверенный уникальный
+range можно вставить, ambiguous результат возвращает до трёх candidates и требует выбора, а
+`no_match` ничего не меняет. Явная пользовательская вставка всегда `locked_by_user=true`.
+
+Команды вроде «первые 15 секунд быстрее», «после середины меньше скриншотов» и «убери все мемы»
+создают новую revision и изменяют только найденный диапазон. Locked items не удаляются, не
+перемещаются и не меняют duration. Добавленный после preview asset создаёт локальную insertion, а
+не полный случайный replan. Rollback создаёт новую active revision из сохранённого JSON и не
+зависит от старого MP4. Обычный rerender детерминированно читает active revision.
+
+`VisualGapAnalyzer` отмечает длинные участки без смены visual и чрезмерно долгие screenshots.
+Ориентир `ASSEMBLY_TARGET_VISUAL_CHANGE_MIN/MAX_SECONDS=3/6` — guideline, а не brainrot-правило.
+Background music представлен ролью/track extension point; автоматический поиск музыки и загрузка
+copyrighted tracks намеренно отсутствуют.
+
+### Preview и final render
+
+Render worker получает сохранённый timeline, никогда не LLM-generated shell command. `PREVIEW`
+по умолчанию использует 720×1280, CRF 27 и `veryfast`; `FINAL` — основные 1080×1920, production
+CRF/preset, H.264/AAC, yuv420p, burned ASS subtitles и faststart. Master audio всегда processed
+VoiceoverTrack. В результате создаётся/обновляется совместимый `VideoProject` с format
+`voiceover_driven`; preview и final paths остаются частью старой Phase 3/4 output architecture.
+
+Реальный локальный smoke с TTS, tiny Whisper, screenshot, screen recording, footage, meme, code
+card, двумя preview, semantic locked placement, новым asset после первого монтажа и final render:
+
+```bash
+python scripts/phase45_smoke.py
+```
+
+Скрипт проверяет duration, H.264/AAC, resolution/pixel format, разные debug frames и очистку temp;
+все медиа создаются во временном каталоге и не попадают в Git.
+
+### Telegram Setup Wizard и runtime settings
+
+`/setup` или `⚙️ Настройки` доступны только в private chat для `OWNER`. AI wizard принимает LM
+Studio/OpenAI-compatible base URL, model и optional key, выполняет реальный `/chat/completions`
+test и только после успеха делает конфигурацию active. Сообщение с key удаляется best-effort;
+ошибка удаления безопасно логируется без значения, raw secret не кладётся в FSM.
+
+`SettingsService` разрешает значения в порядке `database runtime setting → ENV → application
+default`. Safe summary и diagnostics не показывают keys/tokens. `EncryptedDatabaseSecretStore`
+использует Fernet authenticated encryption; plaintext никогда не записывается в SQL, а master key
+остаётся только в bootstrap ENV.
+
+Минимальный bootstrap:
+
+```dotenv
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_ALLOWED_USER_IDS=123456789
+INITIAL_OWNER_TELEGRAM_ID=123456789
+APP_MASTER_KEY=<Fernet key>
+```
+
+Создать key:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+После bootstrap через Setup API/UI меняются AI provider/base URL/model/key и generic runtime
+settings; STT/render/brand sections показывают безопасное текущее состояние. CUDA не считается
+рабочей только на основании строки config — её нужно реально предоставить контейнеру. Diagnostics
+проверяет DB, Redis reachability, FFmpeg/ffprobe, STT/AI/Telegram configuration и не раскрывает
+секреты.
+
+Migration `0006_snowball_production` следует за существующей `0005_publishing`; старые migrations
+не изменены. Для ручной проверки:
+
+```bash
+alembic upgrade 0005_publishing
+alembic upgrade 0006_snowball_production
+alembic downgrade 0005_publishing
+alembic upgrade 0006_snowball_production
+```
+
+### Troubleshooting Phase 4.5
+
+- `Voiceover audio has not been normalized`: дождитесь media worker; Telegram upload не запускает
+  Whisper внутри handler.
+- `A ready voiceover is required`: утвердите script и загрузите final voiceover.
+- `ambiguous`: выберите один из предложенных semantic ranges; случайная вставка не создаётся.
+- Preview собирается, final нет: проверьте свободное место, FFmpeg codecs и render worker queue.
+- LM Studio test не проходит: runtime config не активируется; проверьте endpoint/model/firewall.
+- `APP_MASTER_KEY is not configured`: secret можно передать wizard-у только после bootstrap key.
+
+Полный production example находится в `scripts/phase45_smoke.py`; service/API тесты — в
+`tests/test_phase45_production.py`, `tests/test_phase45_rendering.py` и
+`tests/test_phase45_api_bot.py`.
 
 ## Частые проблемы
 
@@ -722,8 +977,7 @@ mapping в Docker Compose. Одного значения `STT_DEVICE=cuda` не�
 
 Сейчас намеренно не реализованы:
 
-- публикация в YouTube, TikTok и Telegram-каналы;
-- scheduler и social analytics;
+- social analytics: views, likes, comments, retention и recommendations (Phase 6);
 - web dashboard и полноценный timeline editor;
 - face tracking и multi-camera монтаж;
 - generative/stock B-roll, автоматическая музыка и сложная motion graphics;
@@ -734,15 +988,17 @@ mapping в Docker Compose. Одного значения `STT_DEVICE=cuda` не�
 `CANCEL_REQUESTED` предусмотрен в модели, но текущий MVP гарантированно проверяет отмену между
 этапами, а не посылает сигнал уже работающему FFmpeg в середине encode.
 
-Архитектура уже сохраняет исходное видео, извлечённое аудио, timestamps слов, ContentDraft,
-validated EditPlan, overrides, framing, render settings, debug frames и approved MP4. Это база для
-следующего этапа: publishing queue, scheduler и platform adaptations.
+Живые Telegram/YouTube/TikTok E2E требуют test account/channel credentials, admin rights,
+OAuth scopes и, для TikTok, доступные capabilities/audit status. Без них provider boundaries
+проверяются mocked HTTP E2E.
 
 ## Безопасность и приватность
 
 - Секреты читаются из `.env`, который исключён из Git.
 - Telegram доступен только user ID из whitelist.
 - API keys не выводятся в structured logs.
+- OAuth access/refresh tokens хранятся Fernet-encrypted; master key живёт только в ENV.
+- OAuth `state` хранится как hash, одноразовый и имеет expiry; TikTok webhook проверяет HMAC/timestamp.
 - Media blobs не хранятся в PostgreSQL.
 - Video/audio bytes не передаются в LLM. Image bytes уходят во внешний Vision только по явному
   запросу и при `allow_external_vision=true`.
