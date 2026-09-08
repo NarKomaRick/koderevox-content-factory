@@ -1,0 +1,30 @@
+from celery import Celery  # type: ignore[import-untyped]
+
+from app.core.config import get_settings
+
+settings = get_settings()
+celery_app = Celery(
+    "content_factory",
+    broker=settings.redis_url,
+    backend=settings.redis_url,
+    include=["app.tasks.processing", "app.tasks.rendering"],
+)
+celery_app.conf.update(
+    task_serializer="json",
+    result_serializer="json",
+    accept_content=["json"],
+    timezone="UTC",
+    task_track_started=True,
+    task_always_eager=settings.celery_task_always_eager,
+    task_eager_propagates=True,
+    task_routes={
+        "content_factory.process_source": {"queue": "media"},
+        "content_factory.process_source_note": {"queue": "media"},
+        "content_factory.render_video": {"queue": "render"},
+    },
+)
+
+
+@celery_app.task(name="content_factory.healthcheck")
+def healthcheck() -> str:
+    return "ok"
