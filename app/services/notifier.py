@@ -72,6 +72,31 @@ class TelegramNotifier:
         ]
         await self._send(chat_id, text, keyboard)
 
+    async def placement_candidates(
+        self,
+        chat_id: int,
+        material_id: uuid.UUID,
+        candidates: list[dict[str, object]],
+    ) -> None:
+        text = "🎯 Нашёл несколько подходящих мест. Выберите диапазон:"
+        keyboard = [
+            [
+                {
+                    "text": (
+                        f"{index + 1}. {self._number(item.get('start')):.1f}–"
+                        f"{self._number(item.get('end')):.1f} · {str(item['text'])[:24]}"
+                    ),
+                    "callback_data": f"prod_place:{material_id}:{index}",
+                }
+            ]
+            for index, item in enumerate(candidates[:3])
+        ]
+        await self._send(chat_id, text, keyboard)
+
+    @staticmethod
+    def _number(value: object) -> float:
+        return float(value) if isinstance(value, (int, float, str)) else 0.0
+
     async def _send(self, chat_id: int, text: str, keyboard: list[list[dict[str, str]]]) -> None:
         if not self.bot_token:
             return

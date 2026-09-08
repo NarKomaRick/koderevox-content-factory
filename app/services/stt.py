@@ -54,9 +54,16 @@ class FasterWhisperProvider:
                 end=item.end,
                 text=item.text.strip(),
                 words=[
-                    TranscriptWord(word=word.word.strip(), start=word.start, end=word.end)
+                    TranscriptWord(
+                        word=word.word.strip(),
+                        start=float(word.start),
+                        end=float(word.end),
+                    )
                     for word in (getattr(item, "words", None) or [])
-                    if word.start is not None and word.end is not None and word.word.strip()
+                    if word.start is not None
+                    and word.end is not None
+                    and float(word.end) > float(word.start)
+                    and word.word.strip()
                 ],
             )
             for item in raw_segments

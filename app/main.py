@@ -1,12 +1,18 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.api.dependencies import get_publisher_registry
 from app.api.routes import (
     assets,
     drafts,
     ideas,
     inbox,
+    production,
     projects,
+    publishing,
+    setup,
     sources,
     thumbnails,
     video_projects,
@@ -18,10 +24,20 @@ from app.services.errors import InvalidStateError, NotFoundError, ProcessingErro
 settings = get_settings()
 configure_logging(settings.log_level)
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    if get_publisher_registry.cache_info().currsize:
+        await get_publisher_registry().aclose()
+        get_publisher_registry.cache_clear()
+
+
 app = FastAPI(
     title="Koderevox AI Content Factory",
-    version="0.4.0",
+    version="0.5.0",
     description="Self-hosted content inbox, drafting and human-controlled video rendering API.",
+    lifespan=lifespan,
 )
 
 
@@ -41,6 +57,8 @@ async def invalid_state_handler(_request: Request, exc: InvalidStateError) -> JS
 
 
 app.include_router(projects.router)
+app.include_router(production.router)
+app.include_router(setup.router)
 app.include_router(sources.router)
 app.include_router(inbox.router)
 app.include_router(ideas.router)
@@ -48,6 +66,7 @@ app.include_router(drafts.router)
 app.include_router(video_projects.router)
 app.include_router(assets.router)
 app.include_router(thumbnails.router)
+app.include_router(publishing.router)
 
 
 @app.exception_handler(ProcessingError)

@@ -5,10 +5,12 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -28,11 +30,20 @@ from app.models.enums import (
     IdeaStatus,
     Platform,
     ProcessingStage,
+    ProductionFactStatus,
+    ProductionStatus,
+    PublicationAttemptStatus,
+    PublicationEventType,
+    PublicationStatus,
+    PublishingPlatform,
+    PublishPackageStatus,
+    ScriptSource,
     SourceStatus,
     SourceType,
     ThumbnailStatus,
     UserRole,
     VideoProjectStatus,
+    VoiceoverStatus,
 )
 
 
@@ -73,6 +84,7 @@ class Project(Base):
     brand_context: Mapped[str] = mapped_column(Text, default="")
     target_audience: Mapped[str] = mapped_column(Text, default="")
     language: Mapped[str] = mapped_column(String(16), default="ru")
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
     vocabulary: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
     allow_external_vision: Mapped[bool] = mapped_column(default=False)
     brand_preset: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
@@ -338,3 +350,441 @@ class ThumbnailProject(Base):
 
     project: Mapped[Project] = relationship()
     video_project: Mapped[VideoProject] = relationship()
+
+
+class ProductionProject(Base):
+    __tablename__ = "production_projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    initial_source_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("source_items.id", ondelete="SET NULL"), index=True
+    )
+    title: Mapped[str] = mapped_column(String(500))
+    working_title: Mapped[str] = mapped_column(String(500), default="")
+    status: Mapped[ProductionStatus] = enum_column(ProductionStatus, ProductionStatus.IDEA)
+    target_format: Mapped[str] = mapped_column(String(64), default="short_video")
+    target_duration: Mapped[float | None] = mapped_column(Float)
+    current_script_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    approved_script_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    primary_voiceover_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    active_video_project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("video_projects.id", ondelete="SET NULL"), index=True
+    )
+    active_timeline_revision_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
+    production_context: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    persistent_instructions: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+    project: Mapped[Project] = relationship()
+    user: Mapped[User] = relationship()
+    initial_source_item: Mapped[SourceItem | None] = relationship()
+    active_video_project: Mapped[VideoProject | None] = relationship()
+
+
+class ProductionMaterial(Base):
+    __tablename__ = "production_materials"
+    __table_args__ = (
+        UniqueConstraint(
+            "production_project_id", "source_item_id", name="uq_production_material_source"
+        ),
+        UniqueConstraint("production_project_id", "asset_id", name="uq_production_material_asset"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    production_project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="CASCADE"), index=True
+    )
+    source_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("source_items.id", ondelete="SET NULL"), index=True
+    )
+    asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("visual_assets.id", ondelete="SET NULL"), index=True
+    )
+    roles: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    user_instruction: Mapped[str | None] = mapped_column(Text)
+    is_user_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_used: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+    production_project: Mapped[ProductionProject] = relationship()
+    source_item: Mapped[SourceItem | None] = relationship()
+    asset: Mapped[VisualAsset | None] = relationship()
+
+
+class ProductionFact(Base):
+    __tablename__ = "production_facts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    production_project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="CASCADE"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text)
+    source_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("source_items.id", ondelete="SET NULL"), index=True
+    )
+    source_url: Mapped[str | None] = mapped_column(String(2048))
+    status: Mapped[ProductionFactStatus] = enum_column(
+        ProductionFactStatus, ProductionFactStatus.PROPOSED
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+
+class ScriptVersion(Base):
+    __tablename__ = "script_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "production_project_id", "version_number", name="uq_script_project_version"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    production_project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="CASCADE"), index=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer)
+    content: Mapped[str] = mapped_column(Text)
+    structured_sections: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, default=list)
+    source: Mapped[ScriptSource] = enum_column(ScriptSource, ScriptSource.AI)
+    user_instruction: Mapped[str | None] = mapped_column(Text)
+    diff: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class VoiceoverTrack(Base):
+    __tablename__ = "voiceover_tracks"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    production_project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="CASCADE"), index=True
+    )
+    source_item_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("source_items.id", ondelete="RESTRICT"), index=True
+    )
+    original_path: Mapped[str] = mapped_column(String(1024))
+    processed_path: Mapped[str] = mapped_column(String(1024))
+    duration: Mapped[float] = mapped_column(Float)
+    language: Mapped[str | None] = mapped_column(String(16))
+    transcript: Mapped[str] = mapped_column(Text)
+    segments: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, default=list)
+    words: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, default=list)
+    script_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("script_versions.id", ondelete="SET NULL"), index=True
+    )
+    alignment: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    alignment_score: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[VoiceoverStatus] = enum_column(VoiceoverStatus, VoiceoverStatus.PROCESSING)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+
+class TimelineRevision(Base):
+    __tablename__ = "timeline_revisions"
+    __table_args__ = (
+        UniqueConstraint(
+            "production_project_id", "revision_number", name="uq_timeline_project_revision"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    production_project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="CASCADE"), index=True
+    )
+    revision_number: Mapped[int] = mapped_column(Integer)
+    timeline_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    user_instruction: Mapped[str | None] = mapped_column(Text)
+    change_summary: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class RuntimeSetting(Base):
+    __tablename__ = "runtime_settings"
+    __table_args__ = (
+        UniqueConstraint("scope", "scope_id", "key", name="uq_runtime_setting_scope_key"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    scope: Mapped[str] = mapped_column(String(32), default="system")
+    scope_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    key: Mapped[str] = mapped_column(String(255), index=True)
+    value: Mapped[Any] = mapped_column(JSON_DOCUMENT)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+
+class EncryptedSecret(Base):
+    __tablename__ = "encrypted_secrets"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "name", name="uq_encrypted_secret_owner_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+
+class PublishPackage(Base):
+    __tablename__ = "publish_packages"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    content_draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("content_drafts.id", ondelete="SET NULL"), index=True
+    )
+    video_project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("video_projects.id", ondelete="SET NULL"), unique=True, index=True
+    )
+    thumbnail_project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("thumbnail_projects.id", ondelete="SET NULL"), index=True
+    )
+    status: Mapped[PublishPackageStatus] = enum_column(
+        PublishPackageStatus, PublishPackageStatus.DRAFT
+    )
+    master_video_path: Mapped[str | None] = mapped_column(String(1024))
+    master_thumbnail_path: Mapped[str | None] = mapped_column(String(1024))
+    base_title: Mapped[str] = mapped_column(String(500), default="")
+    base_caption: Mapped[str] = mapped_column(Text, default="")
+    base_description: Mapped[str] = mapped_column(Text, default="")
+    package_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSON_DOCUMENT, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+    project: Mapped[Project] = relationship()
+    content_draft: Mapped[ContentDraft | None] = relationship()
+    video_project: Mapped[VideoProject | None] = relationship()
+    thumbnail_project: Mapped[ThumbnailProject | None] = relationship()
+    variants: Mapped[list["PlatformVariant"]] = relationship(
+        back_populates="publish_package", cascade="all, delete-orphan"
+    )
+
+
+class PlatformVariant(Base):
+    __tablename__ = "platform_variants"
+    __table_args__ = (
+        UniqueConstraint("publish_package_id", "platform", name="uq_variant_package_platform"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    publish_package_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("publish_packages.id", ondelete="CASCADE"), index=True
+    )
+    platform: Mapped[PublishingPlatform] = enum_column(
+        PublishingPlatform, PublishingPlatform.TELEGRAM
+    )
+    video_path: Mapped[str | None] = mapped_column(String(1024))
+    thumbnail_path: Mapped[str | None] = mapped_column(String(1024))
+    title: Mapped[str] = mapped_column(String(500), default="")
+    caption: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    hashtags: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    settings: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    media_profile: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+    publish_package: Mapped[PublishPackage] = relationship(back_populates="variants")
+
+
+class PlatformAccount(Base):
+    __tablename__ = "platform_accounts"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "platform", "display_name", name="uq_account_project_platform_name"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    platform: Mapped[PublishingPlatform] = enum_column(
+        PublishingPlatform, PublishingPlatform.TELEGRAM
+    )
+    display_name: Mapped[str] = mapped_column(String(255))
+    external_account_id: Mapped[str | None] = mapped_column(String(512))
+    username: Mapped[str | None] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    settings: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+    project: Mapped[Project] = relationship()
+
+
+class EncryptedCredential(Base):
+    __tablename__ = "encrypted_credentials"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    platform_account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform_accounts.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    encrypted_payload: Mapped[bytes] = mapped_column(LargeBinary)
+    key_version: Mapped[int] = mapped_column(Integer, default=1)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+    platform_account: Mapped[PlatformAccount] = relationship()
+
+
+class Publication(Base):
+    __tablename__ = "publications"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    publish_package_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("publish_packages.id", ondelete="CASCADE"), index=True
+    )
+    platform_variant_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform_variants.id"), index=True
+    )
+    platform_account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("platform_accounts.id"), index=True
+    )
+    platform: Mapped[PublishingPlatform] = enum_column(
+        PublishingPlatform, PublishingPlatform.TELEGRAM
+    )
+    status: Mapped[PublicationStatus] = enum_column(PublicationStatus, PublicationStatus.DRAFT)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    remote_id: Mapped[str | None] = mapped_column(String(512), index=True)
+    remote_url: Mapped[str | None] = mapped_column(String(2048))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(100))
+    last_error_message: Mapped[str | None] = mapped_column(Text)
+    publication_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSON_DOCUMENT, default=dict
+    )
+    variant_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    variant_hash: Mapped[str] = mapped_column(String(64))
+    media_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    task_id: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+    publish_package: Mapped[PublishPackage] = relationship()
+    platform_variant: Mapped[PlatformVariant] = relationship()
+    platform_account: Mapped[PlatformAccount] = relationship()
+    attempts: Mapped[list["PublicationAttempt"]] = relationship(
+        back_populates="publication", cascade="all, delete-orphan"
+    )
+    events: Mapped[list["PublicationEvent"]] = relationship(
+        back_populates="publication", cascade="all, delete-orphan"
+    )
+
+
+class PublicationAttempt(Base):
+    __tablename__ = "publication_attempts"
+    __table_args__ = (
+        UniqueConstraint("publication_id", "attempt_number", name="uq_attempt_number"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    publication_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("publications.id", ondelete="CASCADE"), index=True
+    )
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[PublicationAttemptStatus] = enum_column(
+        PublicationAttemptStatus, PublicationAttemptStatus.STARTED
+    )
+    provider_error_code: Mapped[str | None] = mapped_column(String(255))
+    sanitized_error: Mapped[str | None] = mapped_column(Text)
+    provider_request_id: Mapped[str | None] = mapped_column(String(512))
+    media_hash: Mapped[str | None] = mapped_column(String(64))
+    attempt_metadata: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSON_DOCUMENT, default=dict
+    )
+
+    publication: Mapped[Publication] = relationship(back_populates="attempts")
+
+
+class PublicationEvent(Base):
+    __tablename__ = "publication_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    publication_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("publications.id", ondelete="CASCADE"), index=True
+    )
+    event_type: Mapped[PublicationEventType] = enum_column(
+        PublicationEventType, PublicationEventType.CREATED
+    )
+    details: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    publication: Mapped[Publication] = relationship(back_populates="events")
+
+
+class OAuthState(Base):
+    __tablename__ = "oauth_states"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    state_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    platform: Mapped[PublishingPlatform] = enum_column(
+        PublishingPlatform, PublishingPlatform.YOUTUBE
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    platform_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("platform_accounts.id", ondelete="CASCADE"), index=True
+    )
+    redirect_after: Mapped[str | None] = mapped_column(String(1024))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class WebhookReceipt(Base):
+    __tablename__ = "webhook_receipts"
+    __table_args__ = (
+        UniqueConstraint("platform", "external_event_id", name="uq_webhook_external_event"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    platform: Mapped[PublishingPlatform] = enum_column(
+        PublishingPlatform, PublishingPlatform.TIKTOK
+    )
+    external_event_id: Mapped[str] = mapped_column(String(512))
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

@@ -2,8 +2,75 @@ from enum import StrEnum
 
 
 class UserRole(StrEnum):
+    OWNER = "owner"
     ADMIN = "admin"
     USER = "user"
+
+
+class ProductionStatus(StrEnum):
+    IDEA = "idea"
+    RESEARCH = "research"
+    SCRIPTING = "scripting"
+    READY_FOR_VOICEOVER = "ready_for_voiceover"
+    VOICEOVER_PROCESSING = "voiceover_processing"
+    VOICEOVER_READY = "voiceover_ready"
+    ASSEMBLING = "assembling"
+    ROUGH_CUT = "rough_cut"
+    REVIEW = "review"
+    APPROVED = "approved"
+    ARCHIVED = "archived"
+
+
+class ProductionMaterialRole(StrEnum):
+    VOICEOVER = "voiceover"
+    FOOTAGE = "footage"
+    BROLL = "broll"
+    SCREEN_RECORDING = "screen_recording"
+    SCREENSHOT = "screenshot"
+    MEME = "meme"
+    IMAGE = "image"
+    CODE = "code"
+    REFERENCE = "reference"
+    FACT_SOURCE = "fact_source"
+    MUSIC = "music"
+    OTHER = "other"
+
+
+class ProductionFactStatus(StrEnum):
+    PROPOSED = "proposed"
+    VERIFIED = "verified"
+    USER_CONFIRMED = "user_confirmed"
+    REJECTED = "rejected"
+
+
+class ScriptSource(StrEnum):
+    AI = "ai"
+    USER = "user"
+    AI_EDITED = "ai_edited"
+    IMPORT = "import"
+
+
+class VoiceoverStatus(StrEnum):
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+    REPLACED = "replaced"
+
+
+class TimelineTrack(StrEnum):
+    AUDIO_MASTER = "audio_master"
+    VIDEO_BASE = "video_base"
+    BROLL = "broll"
+    OVERLAY = "overlay"
+    TEXT = "text"
+    SUBTITLES = "subtitles"
+    MUSIC = "music"
+
+
+class RuntimeSettingScope(StrEnum):
+    SYSTEM = "system"
+    USER = "user"
+    PROJECT = "project"
 
 
 class SourceType(StrEnum):
@@ -147,3 +214,52 @@ class ThumbnailPreset(StrEnum):
     TECH_DARK = "tech_dark"
     CLEAN_LIGHT = "clean_light"
     PRODUCT = "product"
+
+
+class PublishingPlatform(StrEnum):
+    TELEGRAM = "telegram"
+    YOUTUBE = "youtube"
+    TIKTOK = "tiktok"
+
+
+class PublishPackageStatus(StrEnum):
+    DRAFT = "draft"
+    READY = "ready"
+    PARTIALLY_PUBLISHED = "partially_published"
+    PUBLISHED = "published"
+    FAILED = "failed"
+    ARCHIVED = "archived"
+
+
+class PublicationStatus(StrEnum):
+    DRAFT = "draft"
+    SCHEDULED = "scheduled"
+    QUEUED = "queued"
+    PUBLISHING = "publishing"
+    PROCESSING = "processing"
+    PUBLISHED = "published"
+    PUBLISHED_WITH_WARNING = "published_with_warning"
+    RETRY_WAIT = "retry_wait"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class PublicationAttemptStatus(StrEnum):
+    STARTED = "started"
+    PROCESSING = "processing"
+    SUCCEEDED = "succeeded"
+    RETRY_SCHEDULED = "retry_scheduled"
+    FAILED = "failed"
+
+
+class PublicationEventType(StrEnum):
+    CREATED = "created"
+    SCHEDULED = "scheduled"
+    CLAIMED = "claimed"
+    UPLOAD_STARTED = "upload_started"
+    REMOTE_ACCEPTED = "remote_accepted"
+    PROCESSING = "processing"
+    PUBLISHED = "published"
+    FAILED = "failed"
+    RETRIED = "retried"
+    CANCELLED = "cancelled"

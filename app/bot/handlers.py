@@ -1,3 +1,7 @@
+from datetime import datetime, timedelta
+from typing import Any
+from zoneinfo import ZoneInfo
+
 import httpx
 import structlog
 from aiogram import F, Router
@@ -13,6 +17,9 @@ from app.bot.formatters import (
     format_digest,
     format_draft,
     format_inbox,
+    format_production,
+    format_publication_preview,
+    format_publications,
     format_repurposed,
     format_source_detail,
     format_video_concepts,
@@ -22,11 +29,22 @@ from app.bot.formatters import (
 from app.bot.ingestion import build_source_payload, received_message
 from app.bot.keyboards import (
     angle_keyboard,
+    approved_video_keyboard,
     draft_keyboard,
     inbox_keyboard,
     main_menu,
+    platform_selection_keyboard,
+    production_keyboard,
+    production_list_keyboard,
+    publication_detail_keyboard,
+    publication_preview_keyboard,
+    publication_time_keyboard,
+    publications_filter_keyboard,
+    script_version_keyboard,
+    setup_keyboard,
     source_detail_keyboard,
     thumbnail_keyboard,
+    tiktok_settings_keyboard,
     video_concepts_keyboard,
     video_edit_keyboard,
     video_plan_keyboard,
@@ -60,6 +78,319 @@ class VideoEditFlow(StatesGroup):
 
 class AssetFlow(StatesGroup):
     waiting_for_material = State()
+
+
+class PublishingFlow(StatesGroup):
+    selecting_platforms = State()
+    editing_variant = State()
+    waiting_for_time = State()
+    waiting_for_datetime = State()
+    waiting_for_reschedule = State()
+    editing_publication = State()
+
+
+class ProductionFlow(StatesGroup):
+    waiting_for_idea = State()
+    active = State()
+    waiting_for_script_edit = State()
+    waiting_for_replan = State()
+
+
+class SetupFlow(StatesGroup):
+    waiting_for_ai = State()
+
+
+@router.message(F.text == "🎬 Новый ролик")
+async def new_production(message: Message, state: FSMContext) -> None:
+    await state.set_state(ProductionFlow.waiting_for_idea)
+    await message.answer("О чём хочешь сделать ролик? Можно отправить текст, voice, URL или файл.")
+
+
+@router.message(F.text == "📂 Мои ролики")
+async def my_productions(message: Message, backend: BackendClient) -> None:
+    assert message.from_user is not None
+    projects = await backend.list_productions(message.from_user.id)
+    if not projects:
+        await message.answer("Роликов пока нет. Нажмите «🎬 Новый ролик».")
+        return
+    await message.answer("📂 Мои ролики", reply_markup=production_list_keyboard(projects))
+
+
+@router.message(
+    ProductionFlow.waiting_for_idea,
+    F.content_type.in_({"text", "voice", "audio", "video", "video_note", "photo", "document"}),
+)
+async def receive_production_idea(
+    message: Message, event_update: Update, state: FSMContext, backend: BackendClient
+) -> None:
+    payload = build_source_payload(message, event_update.update_id)
+    result = await backend.ingest(payload)
+    source = result["source"]
+    title = message.text or message.caption or source.get("original_filename") or "Новый ролик"
+    project = await backend.create_production(source, title)
+    await state.set_state(ProductionFlow.active)
+    await state.update_data(production_id=project["id"])
+    await message.answer(format_production(project), reply_markup=production_keyboard(project))
+
+
+@router.callback_query(F.data.startswith("prod_open:"))
+async def open_production(
+    callback: CallbackQuery, state: FSMContext, backend: BackendClient
+) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    project = await backend.get_production(callback.data.split(":", 1)[1])
+    await state.set_state(ProductionFlow.active)
+    await state.update_data(production_id=project["id"])
+    await callback.message.answer(
+        format_production(project), reply_markup=production_keyboard(project)
+    )
+
+
+@router.callback_query(F.data.startswith("prod_script:"))
+async def production_script(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    project_id = callback.data.split(":", 1)[1]
+    script = await backend.generate_production_script(project_id)
+    await callback.message.answer(
+        f"📝 Сценарий v{script['version_number']}\n\n{script['content']}",
+        reply_markup=script_version_keyboard(project_id, script["id"]),
+    )
+
+
+@router.callback_query(F.data.startswith("prod_script_edit:"))
+async def request_production_script_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        project_id = callback.data.split(":", 1)[1]
+        await state.set_state(ProductionFlow.waiting_for_script_edit)
+        await state.update_data(production_id=project_id)
+        await callback.message.answer("Напишите правку обычным языком.")
+
+
+@router.callback_query(F.data.startswith("prod_hook:"))
+async def strengthen_production_hook(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        project_id = callback.data.split(":", 1)[1]
+        script = await backend.edit_production_script(
+            project_id, "Начало слишком скучное. Усиль hook."
+        )
+        await callback.message.answer(
+            f"📝 Сценарий v{script['version_number']}\n\n{script['content']}",
+            reply_markup=script_version_keyboard(project_id, script["id"]),
+        )
+
+
+@router.message(ProductionFlow.waiting_for_script_edit, F.text)
+async def apply_production_script_edit(
+    message: Message, state: FSMContext, backend: BackendClient
+) -> None:
+    project_id = str((await state.get_data()).get("production_id") or "")
+    script = await backend.edit_production_script(project_id, message.text or "")
+    await state.set_state(ProductionFlow.active)
+    await message.answer(
+        f"📝 Сценарий v{script['version_number']}\n\n"
+        f"Изменения: {', '.join(script.get('diff', {}).get('summary', []))}\n\n"
+        f"{script['content']}",
+        reply_markup=script_version_keyboard(project_id, script["id"]),
+    )
+
+
+@router.callback_query(F.data.startswith("prod_approve:"))
+async def approve_production_script(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer("Сценарий утверждён")
+    if callback.data and isinstance(callback.message, Message):
+        _, project_id, script_id = callback.data.split(":", 2)
+        await backend.approve_production_script(project_id, script_id)
+        await callback.message.answer(
+            "✅ Сценарий утверждён. Дальше отправьте финальную озвучку через «Добавить материал»."
+        )
+
+
+@router.callback_query(F.data.startswith("prod_add:"))
+async def add_production_material(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        await state.set_state(ProductionFlow.active)
+        await state.update_data(production_id=callback.data.split(":", 1)[1])
+        await callback.message.answer(
+            "Отправьте text, voice, audio, photo, video, screenshot, document или URL. "
+            "Caption станет инструкцией по использованию."
+        )
+
+
+@router.message(
+    ProductionFlow.active,
+    F.content_type.in_({"text", "voice", "audio", "video", "video_note", "photo", "document"}),
+)
+async def receive_production_material(
+    message: Message, event_update: Update, state: FSMContext, backend: BackendClient
+) -> None:
+    project_id = str((await state.get_data()).get("production_id") or "")
+    payload = build_source_payload(message, event_update.update_id)
+    result = await backend.ingest(payload)
+    project = await backend.get_production(project_id)
+    is_audio = payload["type"] in {"voice", "audio", "video_note"}
+    roles = ["voiceover"] if is_audio and project.get("approved_script_version_id") else []
+    await backend.attach_production_material(
+        project_id,
+        source_item_id=result["source"]["id"],
+        roles=roles,
+        instruction=message.caption or (message.text if payload["type"] != "text" else None),
+    )
+    if roles:
+        await message.answer("🎙 Озвучка принята. STT и alignment выполняются в media worker.")
+    else:
+        await message.answer("📎 Материал привязан к текущему ролику и обрабатывается.")
+
+
+@router.callback_query(F.data.startswith("prod_materials:"))
+async def production_materials(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        items = await backend.production_materials(callback.data.split(":", 1)[1])
+        used = sum(bool(item["is_used"]) for item in items)
+        lines = [f"📎 Материалы: {len(items)} · используется: {used}"]
+        lines.extend(
+            f"{'✅' if item['is_used'] else '⚪'} {', '.join(item['roles']) or 'обработка'}"
+            for item in items[:20]
+        )
+        await callback.message.answer("\n".join(lines))
+
+
+@router.callback_query(F.data.startswith("prod_assemble:"))
+async def assemble_production(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        revision = await backend.assemble_production(callback.data.split(":", 1)[1])
+        await callback.message.answer(
+            f"🎬 Черновой монтаж готов. Timeline revision {revision['revision_number']}."
+        )
+
+
+@router.callback_query(F.data.startswith("prod_place:"))
+async def select_production_placement(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer("Место выбрано")
+    if callback.data and isinstance(callback.message, Message):
+        _, material_id, index = callback.data.split(":", 2)
+        result = await backend.select_production_placement(material_id, int(index))
+        await callback.message.answer(
+            f"✅ Locked-вставка добавлена в Timeline revision {result['revision']}."
+        )
+
+
+@router.callback_query(F.data.startswith("prod_preview:"))
+@router.callback_query(F.data.startswith("prod_final:"))
+async def render_production(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        action, project_id = callback.data.split(":", 1)
+        profile = "final" if action == "prod_final" else "preview"
+        result = await backend.render_production(project_id, profile)
+        await callback.message.answer(f"Рендер {profile} поставлен в очередь: {result['task_id']}")
+
+
+@router.callback_query(F.data.startswith("prod_replan:"))
+async def request_production_replan(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        await state.set_state(ProductionFlow.waiting_for_replan)
+        await state.update_data(production_id=callback.data.split(":", 1)[1])
+        await callback.message.answer("Опишите, какой участок и как изменить.")
+
+
+@router.message(ProductionFlow.waiting_for_replan, F.text)
+async def apply_production_replan(
+    message: Message, state: FSMContext, backend: BackendClient
+) -> None:
+    project_id = str((await state.get_data()).get("production_id") or "")
+    revision = await backend.replan_production(project_id, message.text or "")
+    await state.set_state(ProductionFlow.active)
+    await message.answer(
+        f"✅ Создан Timeline revision {revision['revision_number']}. "
+        "Ручные locked-вставки сохранены."
+    )
+
+
+@router.message(Command("setup"))
+@router.message(F.text == "⚙️ Настройки")
+async def setup_menu(message: Message) -> None:
+    if message.chat.type != "private":
+        await message.answer("Настройки доступны только в private chat.")
+        return
+    await message.answer(
+        "⚙️ Настройки\n\nРазделы с внешними credentials активируются после bootstrap "
+        "APP_MASTER_KEY и INITIAL_OWNER_TELEGRAM_ID.",
+        reply_markup=setup_keyboard(),
+    )
+
+
+@router.callback_query(F.data.startswith("setup:"))
+async def setup_section(callback: CallbackQuery, state: FSMContext, backend: BackendClient) -> None:
+    await callback.answer()
+    if isinstance(callback.message, Message) and callback.data:
+        section = callback.data.split(":", 1)[1]
+        if section == "ai":
+            await state.set_state(SetupFlow.waiting_for_ai)
+            await callback.message.answer(
+                "Отправьте одной строкой: BASE_URL | MODEL | API_KEY\n"
+                "Для LM Studio API_KEY можно оставить пустым. Сообщение будет удалено."
+            )
+            return
+        if section == "diagnostics" and callback.from_user:
+            diagnostics = await backend.setup_diagnostics(callback.from_user.id)
+            await callback.message.answer(
+                "📊 Диагностика\n\n"
+                + "\n".join(f"{name:<18} {value}" for name, value in diagnostics.items())
+            )
+            return
+        descriptions = {
+            "ai": (
+                "🤖 AI: LM Studio / OpenAI-compatible. Provider test обязателен перед activation."
+            ),
+            "stt": "🎙 STT: faster-whisper; model/device/compute доступны как runtime settings.",
+            "brand": "🎨 Бренд: Koderevox technical / clean / dark / minimal.",
+            "render": "⚙️ Render: PREVIEW 720×1280, FINAL 1080×1920.",
+            "security": "🔐 Secrets: encrypted database store; master key только из ENV.",
+            "diagnostics": "📊 Диагностика доступна через API; secret values никогда не выводятся.",
+        }
+        await callback.message.answer(descriptions.get(section, "Not configured"))
+
+
+@router.message(SetupFlow.waiting_for_ai, F.text)
+async def setup_ai_connection(message: Message, state: FSMContext, backend: BackendClient) -> None:
+    assert message.from_user is not None
+    parts = [part.strip() for part in (message.text or "").split("|")]
+    if len(parts) != 3 or not parts[0] or not parts[1]:
+        await message.answer("Формат: BASE_URL | MODEL | API_KEY")
+        return
+    base_url, model, api_key = parts
+    try:
+        result = await backend.setup_ai(
+            telegram_user_id=message.from_user.id,
+            base_url=base_url,
+            model=model,
+            api_key=api_key or None,
+        )
+    except httpx.HTTPError:
+        await message.answer("⚠️ Подключение не прошло проверку. Конфигурация не активирована.")
+        return
+    finally:
+        try:
+            await message.delete()
+        except Exception as exc:
+            await logger.awarning(
+                "telegram_secret_message_delete_failed", error_type=type(exc).__name__
+            )
+        await state.clear()
+    await message.answer(
+        f"🔐 Ключ сохранён.\n✅ Подключение работает.\nModel: {model}\n"
+        f"Latency: {result['latency_ms']} ms"
+    )
 
 
 @router.message(CommandStart())
@@ -555,7 +886,503 @@ async def approve_video(callback: CallbackQuery, backend: BackendClient) -> None
     if callback.data:
         await backend.approve_video(callback.data.split(":", 1)[1])
     if isinstance(callback.message, Message):
-        await callback.message.answer("Видео одобрено ✅")
+        video_project_id = callback.data.split(":", 1)[1] if callback.data else ""
+        await callback.message.answer(
+            "Видео одобрено ✅", reply_markup=approved_video_keyboard(video_project_id)
+        )
+
+
+@router.callback_query(F.data.startswith("video_publish:"))
+async def choose_publish_platforms(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    video_project_id = callback.data.split(":", 1)[1]
+    selected = {"telegram"}
+    await state.set_state(PublishingFlow.selecting_platforms)
+    await state.update_data(video_project_id=video_project_id, publish_platforms=list(selected))
+    await callback.message.answer(
+        "Выберите площадки:",
+        reply_markup=platform_selection_keyboard(video_project_id, selected),
+    )
+
+
+@router.callback_query(F.data.startswith("pubtoggle:"))
+async def toggle_publish_platform(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    _, platform, video_project_id = callback.data.split(":", 2)
+    data = await state.get_data()
+    selected = set(data.get("publish_platforms", []))
+    if platform in selected:
+        selected.remove(platform)
+    else:
+        selected.add(platform)
+    await state.update_data(video_project_id=video_project_id, publish_platforms=list(selected))
+    await callback.message.edit_reply_markup(
+        reply_markup=platform_selection_keyboard(video_project_id, selected)
+    )
+
+
+@router.callback_query(F.data.startswith("pubprepare:"))
+async def prepare_publication_preview(
+    callback: CallbackQuery, state: FSMContext, backend: BackendClient
+) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    data = await state.get_data()
+    platforms = list(data.get("publish_platforms", []))
+    if not platforms:
+        await callback.message.answer("Выберите хотя бы одну площадку.")
+        return
+    video_project_id = callback.data.split(":", 1)[1]
+    await callback.message.answer("Готовлю отдельные тексты для площадок…")
+    package = await backend.prepare_publish_package(video_project_id, platforms)
+    for variant in package["variants"]:
+        if variant["platform"] == "tiktok" and variant["settings"].get("requires_rerender"):
+            media = await backend.prepare_platform_variant_media(variant["id"])
+            if media["queued"]:
+                await callback.message.answer(
+                    "TikTok-safe версия рендерится без watermark/logo; AI-анализ не повторяется."
+                )
+    await state.update_data(
+        publish_package_id=package["package"]["id"],
+        publish_variants=package["variants"],
+        video_project_id=video_project_id,
+    )
+    await callback.message.answer(
+        format_publication_preview(package["variants"]),
+        reply_markup=publication_preview_keyboard(package["package"]["id"], package["variants"]),
+    )
+
+
+@router.callback_query(F.data.startswith("pubedit:"))
+async def request_variant_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    variant_id = callback.data.split(":", 1)[1]
+    variants = (await state.get_data()).get("publish_variants", [])
+    variant = next((item for item in variants if item["id"] == variant_id), None)
+    if variant is None:
+        await callback.message.answer("Preview устарел. Откройте публикацию заново.")
+        return
+    await state.set_state(PublishingFlow.editing_variant)
+    await state.update_data(edit_variant_id=variant_id, edit_platform=variant["platform"])
+    await callback.message.answer(
+        "Первая строка — заголовок. После пустой строки — caption/description."
+    )
+
+
+@router.message(PublishingFlow.editing_variant, F.text)
+async def apply_variant_edit(message: Message, state: FSMContext, backend: BackendClient) -> None:
+    data = await state.get_data()
+    variant_id = data.get("edit_variant_id")
+    platform = data.get("edit_platform")
+    if not variant_id or not platform:
+        await state.clear()
+        return
+    title, separator, body = (message.text or "").partition("\n\n")
+    fields: dict[str, str] = {"title": title.strip()}
+    fields["description" if platform == "youtube" else "caption"] = (
+        body.strip() if separator else title.strip()
+    )
+    await backend.update_platform_variant(str(variant_id), **fields)
+    package_id = str(data["publish_package_id"])
+    package = await backend.get_publish_package(package_id)
+    await state.set_state(PublishingFlow.selecting_platforms)
+    await state.update_data(publish_variants=package["variants"])
+    await message.answer(
+        format_publication_preview(package["variants"]),
+        reply_markup=publication_preview_keyboard(package_id, package["variants"]),
+    )
+
+
+@router.callback_query(F.data.startswith("pubregen:"))
+async def regenerate_publication_texts(
+    callback: CallbackQuery, state: FSMContext, backend: BackendClient
+) -> None:
+    await callback.answer()
+    if not isinstance(callback.message, Message):
+        return
+    data = await state.get_data()
+    video_project_id = str(data.get("video_project_id", ""))
+    platforms = list(data.get("publish_platforms", []))
+    package = await backend.prepare_publish_package(video_project_id, platforms, regenerate=True)
+    await state.update_data(publish_variants=package["variants"])
+    await callback.message.answer(
+        format_publication_preview(package["variants"]),
+        reply_markup=publication_preview_keyboard(package["package"]["id"], package["variants"]),
+    )
+
+
+@router.callback_query(F.data.startswith("pubtiktok:"))
+async def configure_tiktok_variant(
+    callback: CallbackQuery, state: FSMContext, backend: BackendClient
+) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    variant_id = callback.data.split(":", 1)[1]
+    data = await state.get_data()
+    package = await backend.get_publish_package(str(data["publish_package_id"]))
+    variant = next(item for item in package["variants"] if item["id"] == variant_id)
+    accounts = await backend.list_platform_accounts(package["package"]["project_id"], "tiktok")
+    account = next((item for item in accounts if item["is_active"]), None)
+    if account is None:
+        await callback.message.answer("Сначала подключите активный TikTok account.")
+        return
+    report = await backend.validate_platform_variant(variant_id, account["id"])
+    capabilities = report.get("capabilities", {})
+    if not capabilities:
+        await callback.message.answer("Не удалось получить TikTok creator capabilities.")
+        return
+    await state.update_data(
+        tiktok_variant_id=variant_id,
+        tiktok_settings=variant["settings"],
+        tiktok_capabilities=capabilities,
+    )
+    await callback.message.answer(
+        "TikTok требует явного выбора visibility и разрешений:",
+        reply_markup=tiktok_settings_keyboard(variant_id, variant["settings"], capabilities),
+    )
+
+
+async def _save_tiktok_settings(
+    message: Message, state: FSMContext, backend: BackendClient
+) -> None:
+    data = await state.get_data()
+    variant_id = str(data["tiktok_variant_id"])
+    settings = dict(data["tiktok_settings"])
+    capabilities = dict(data["tiktok_capabilities"])
+    await backend.update_platform_variant(variant_id, settings=settings)
+    await message.edit_reply_markup(
+        reply_markup=tiktok_settings_keyboard(variant_id, settings, capabilities)
+    )
+
+
+@router.callback_query(F.data.startswith("ttps:"))
+async def set_tiktok_privacy(
+    callback: CallbackQuery, state: FSMContext, backend: BackendClient
+) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    _, code, _ = callback.data.split(":", 2)
+    mapping = {
+        "p": "PUBLIC_TO_EVERYONE",
+        "f": "MUTUAL_FOLLOW_FRIENDS",
+        "s": "SELF_ONLY",
+    }
+    data = await state.get_data()
+    settings = dict(data["tiktok_settings"])
+    settings["privacy_level"] = mapping[code]
+    settings["user_consent_confirmed"] = False
+    await state.update_data(tiktok_settings=settings)
+    await _save_tiktok_settings(callback.message, state, backend)
+
+
+@router.callback_query(F.data.startswith("ttop:"))
+async def toggle_tiktok_option(
+    callback: CallbackQuery, state: FSMContext, backend: BackendClient
+) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    _, code, _ = callback.data.split(":", 2)
+    fields = {"c": "disable_comment", "d": "disable_duet", "s": "disable_stitch"}
+    data = await state.get_data()
+    settings = dict(data["tiktok_settings"])
+    field = fields[code]
+    settings[field] = not bool(settings.get(field, False))
+    settings["user_consent_confirmed"] = False
+    await state.update_data(tiktok_settings=settings)
+    await _save_tiktok_settings(callback.message, state, backend)
+
+
+@router.callback_query(F.data.startswith("ttok:"))
+async def confirm_tiktok_options(
+    callback: CallbackQuery, state: FSMContext, backend: BackendClient
+) -> None:
+    await callback.answer("Настройки подтверждены")
+    if not isinstance(callback.message, Message):
+        return
+    data = await state.get_data()
+    settings = dict(data["tiktok_settings"])
+    settings["user_consent_confirmed"] = True
+    await state.update_data(tiktok_settings=settings)
+    await _save_tiktok_settings(callback.message, state, backend)
+
+
+@router.callback_query(F.data.startswith("pubready:"))
+async def choose_publication_time(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        package_id = callback.data.split(":", 1)[1]
+        await state.update_data(publish_package_id=package_id)
+        await callback.message.answer(
+            "Когда опубликовать? Время будет показано в timezone проекта.",
+            reply_markup=publication_time_keyboard(package_id),
+        )
+
+
+@router.callback_query(F.data.startswith("pubday:"))
+async def choose_publication_day(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    _, offset, package_id = callback.data.split(":", 2)
+    await state.set_state(PublishingFlow.waiting_for_time)
+    await state.update_data(publish_package_id=package_id, publish_day_offset=int(offset))
+    await callback.message.answer("Введите время в формате ЧЧ:ММ, например 12:00.")
+
+
+@router.callback_query(F.data.startswith("pubdate:"))
+async def choose_publication_datetime(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        await state.set_state(PublishingFlow.waiting_for_datetime)
+        await state.update_data(publish_package_id=callback.data.split(":", 1)[1])
+        await callback.message.answer("Введите дату и время: ДД.ММ.ГГГГ ЧЧ:ММ")
+
+
+async def _package_timezone(package: dict[str, Any], backend: BackendClient) -> ZoneInfo:
+    projects = await backend.list_projects()
+    project = next(item for item in projects if item["id"] == package["package"]["project_id"])
+    return ZoneInfo(project.get("timezone") or "UTC")
+
+
+async def _submit_package(
+    message: Message,
+    package_id: str,
+    backend: BackendClient,
+    *,
+    scheduled_at: datetime | None,
+) -> None:
+    package = await backend.get_publish_package(package_id)
+    accounts = await backend.list_platform_accounts(package["package"]["project_id"])
+    items = []
+    missing = []
+    for variant in package["variants"]:
+        account = next(
+            (
+                item
+                for item in accounts
+                if item["platform"] == variant["platform"] and item["is_active"]
+            ),
+            None,
+        )
+        if account is None:
+            missing.append(variant["platform"])
+            continue
+        moment = scheduled_at.isoformat() if scheduled_at else "now"
+        items.append(
+            {
+                "platform_variant_id": variant["id"],
+                "platform_account_id": account["id"],
+                "scheduled_at": scheduled_at.isoformat() if scheduled_at else None,
+                "publish_now": scheduled_at is None,
+                "idempotency_key": f"bot:{package_id}:{variant['platform']}:{moment}",
+                "metadata": {"notify_chat_id": message.chat.id},
+            }
+        )
+    if missing:
+        await message.answer("Нет активного аккаунта: " + ", ".join(missing))
+    if not items:
+        return
+    result = await backend.create_publications(items)
+    failed = [report for report in result["validation"] if not report["ready"]]
+    if scheduled_at and result["publications"]:
+        await message.answer(
+            f"📅 Контент запланирован: {scheduled_at.astimezone().strftime('%d.%m %H:%M')}."
+        )
+    elif result["publications"]:
+        await message.answer("🚀 Публикация поставлена в очередь.")
+    if failed:
+        lines = ["⚠️ Некоторые площадки не готовы:"]
+        for report in failed:
+            issues = "; ".join(issue["message"] for issue in report["issues"])
+            lines.append(f"{report['platform']}: {issues}")
+        await message.answer("\n".join(lines))
+
+
+@router.callback_query(F.data.startswith("pubnow:"))
+async def submit_publication_now(
+    callback: CallbackQuery, state: FSMContext, backend: BackendClient
+) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        await _submit_package(
+            callback.message, callback.data.split(":", 1)[1], backend, scheduled_at=None
+        )
+        await state.clear()
+
+
+@router.message(PublishingFlow.waiting_for_time, F.text)
+async def submit_publication_time(
+    message: Message, state: FSMContext, backend: BackendClient
+) -> None:
+    data = await state.get_data()
+    try:
+        hour, minute = (int(item) for item in (message.text or "").split(":"))
+        package = await backend.get_publish_package(str(data["publish_package_id"]))
+        timezone = await _package_timezone(package, backend)
+        local = datetime.now(timezone) + timedelta(days=int(data["publish_day_offset"]))
+        scheduled = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if scheduled <= datetime.now(timezone):
+            raise ValueError
+    except (ValueError, KeyError):
+        await message.answer("Нужно будущее время в формате ЧЧ:ММ.")
+        return
+    await _submit_package(message, str(data["publish_package_id"]), backend, scheduled_at=scheduled)
+    await state.clear()
+
+
+@router.message(PublishingFlow.waiting_for_datetime, F.text)
+async def submit_publication_datetime(
+    message: Message, state: FSMContext, backend: BackendClient
+) -> None:
+    data = await state.get_data()
+    try:
+        package = await backend.get_publish_package(str(data["publish_package_id"]))
+        timezone = await _package_timezone(package, backend)
+        scheduled = datetime.strptime(message.text or "", "%d.%m.%Y %H:%M").replace(tzinfo=timezone)
+        if scheduled <= datetime.now(timezone):
+            raise ValueError
+    except (ValueError, KeyError):
+        await message.answer("Нужна будущая дата: ДД.ММ.ГГГГ ЧЧ:ММ")
+        return
+    await _submit_package(message, str(data["publish_package_id"]), backend, scheduled_at=scheduled)
+    await state.clear()
+
+
+@router.message(Command("publications"))
+@router.message(F.text == "📅 Публикации")
+async def show_publications(message: Message, backend: BackendClient) -> None:
+    items = await backend.list_publications()
+    await message.answer(
+        format_publications(items), reply_markup=publications_filter_keyboard(items)
+    )
+
+
+@router.callback_query(F.data.startswith("publist:"))
+async def filter_publications(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    requested = callback.data.split(":", 1)[1]
+    status_groups = {
+        "publishing": ["queued", "publishing", "processing", "retry_wait"],
+        "published": ["published", "published_with_warning"],
+        "failed": ["failed"],
+        "scheduled": ["scheduled"],
+    }
+    items = []
+    for status in status_groups.get(requested, [requested]):
+        items.extend(await backend.list_publications(status))
+    items.sort(key=lambda item: item["created_at"], reverse=True)
+    await callback.message.edit_text(
+        format_publications(items), reply_markup=publications_filter_keyboard(items)
+    )
+
+
+@router.callback_query(F.data.startswith("pubopen:"))
+async def open_publication(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        publication = await backend.get_publication(callback.data.split(":", 1)[1])
+        await callback.message.answer(
+            format_publications([publication]),
+            reply_markup=publication_detail_keyboard(publication),
+        )
+
+
+async def _publication_timezone(publication: dict[str, Any], backend: BackendClient) -> ZoneInfo:
+    package = await backend.get_publish_package(publication["publish_package_id"])
+    return await _package_timezone(package, backend)
+
+
+@router.callback_query(F.data.startswith("pubresched:"))
+async def request_publication_reschedule(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        await state.set_state(PublishingFlow.waiting_for_reschedule)
+        await state.update_data(publication_id=callback.data.split(":", 1)[1])
+        await callback.message.answer("Введите новые дату и время: ДД.ММ.ГГГГ ЧЧ:ММ")
+
+
+@router.message(PublishingFlow.waiting_for_reschedule, F.text)
+async def reschedule_publication(
+    message: Message, state: FSMContext, backend: BackendClient
+) -> None:
+    data = await state.get_data()
+    try:
+        publication = await backend.get_publication(str(data["publication_id"]))
+        timezone = await _publication_timezone(publication, backend)
+        scheduled = datetime.strptime(message.text or "", "%d.%m.%Y %H:%M").replace(tzinfo=timezone)
+        if scheduled <= datetime.now(timezone):
+            raise ValueError
+    except (ValueError, KeyError):
+        await message.answer("Нужна будущая дата: ДД.ММ.ГГГГ ЧЧ:ММ")
+        return
+    result = await backend.reschedule_publication(str(data["publication_id"]), scheduled)
+    await message.answer("⏰ Время обновлено.\n" + format_publications([result]))
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("pubcontent:"))
+async def request_publication_content(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        await state.set_state(PublishingFlow.editing_publication)
+        await state.update_data(publication_id=callback.data.split(":", 1)[1])
+        await callback.message.answer(
+            "Отправьте заголовок первой строкой, затем пустую строку и новый текст."
+        )
+
+
+@router.message(PublishingFlow.editing_publication, F.text)
+async def edit_publication_content(
+    message: Message, state: FSMContext, backend: BackendClient
+) -> None:
+    data = await state.get_data()
+    parts = (message.text or "").split("\n\n", 1)
+    if len(parts) != 2 or not all(part.strip() for part in parts):
+        await message.answer("Нужны заголовок, пустая строка и текст.")
+        return
+    publication = await backend.get_publication(str(data["publication_id"]))
+    body_field = "description" if publication["platform"] == "youtube" else "caption"
+    result = await backend.update_publication_content(
+        str(data["publication_id"]), title=parts[0].strip(), **{body_field: parts[1].strip()}
+    )
+    await message.answer("✅ Текст обновлён и повторно проверен.\n" + format_publications([result]))
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("pubrun:"))
+async def run_publication(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        result = await backend.publish_now(callback.data.split(":", 1)[1])
+        await callback.message.answer(format_publications([result]))
+
+
+@router.callback_query(F.data.startswith("pubcancel:"))
+async def cancel_scheduled_publication(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer("Отменено")
+    if callback.data and isinstance(callback.message, Message):
+        result = await backend.cancel_publication(callback.data.split(":", 1)[1])
+        await callback.message.answer(format_publications([result]))
+
+
+@router.callback_query(F.data.startswith("pubretry:"))
+async def retry_failed_publication(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        result = await backend.retry_publication(callback.data.split(":", 1)[1])
+        await callback.message.answer(format_publications([result]))
 
 
 @router.callback_query(F.data.startswith("video_archive:"))

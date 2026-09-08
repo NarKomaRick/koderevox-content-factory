@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -18,7 +19,9 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str = ""
     telegram_allowed_user_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
+    telegram_publish_bot_token: str = ""
     backend_url: str = "http://api:8000"
+    default_timezone: str = "Europe/Moscow"
 
     ai_provider: str = "mock"
     ai_base_url: str = "http://host.docker.internal:1234/v1"
@@ -76,6 +79,31 @@ class Settings(BaseSettings):
     visual_safe_margin_bottom: int = Field(default=360, ge=0)
     thumbnail_width: int = Field(default=1280, ge=320, le=4096)
     thumbnail_height: int = Field(default=720, ge=180, le=4096)
+    assembly_target_visual_change_min_seconds: float = Field(default=3.0, gt=0)
+    assembly_target_visual_change_max_seconds: float = Field(default=6.0, gt=0)
+    assembly_max_screenshot_seconds: float = Field(default=8.0, gt=0)
+    preview_width: int = Field(default=720, ge=240, le=2160, multiple_of=2)
+    preview_height: int = Field(default=1280, ge=240, le=3840, multiple_of=2)
+    preview_crf: int = Field(default=27, ge=0, le=51)
+    preview_preset: str = "veryfast"
+    initial_owner_telegram_id: int | None = None
+    app_master_key: str = ""
+    setup_sensitive_rate_limit_seconds: int = Field(default=10, ge=1, le=3600)
+
+    publish_scheduler_interval_seconds: int = Field(default=30, ge=1, le=3600)
+    publish_max_attempts: int = Field(default=5, ge=1, le=20)
+    celery_publish_concurrency: int = Field(default=2, ge=1, le=32)
+    publish_retry_delays_seconds: Annotated[list[int], NoDecode] = Field(
+        default_factory=lambda: [60, 300, 900, 3600]
+    )
+    credential_encryption_key: str = ""
+    youtube_client_id: str = ""
+    youtube_client_secret: str = ""
+    youtube_redirect_uri: str = ""
+    tiktok_client_key: str = ""
+    tiktok_client_secret: str = ""
+    tiktok_redirect_uri: str = ""
+    tiktok_webhook_tolerance_seconds: int = Field(default=300, ge=30, le=3600)
 
     @field_validator("telegram_allowed_user_ids", mode="before")
     @classmethod
@@ -86,6 +114,22 @@ class Settings(BaseSettings):
             return [int(item.strip()) for item in value.split(",")]
         return value
 
+    @field_validator("publish_retry_delays_seconds", mode="before")
+    @classmethod
+    def parse_retry_delays(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [int(item.strip()) for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("default_timezone")
+    @classmethod
+    def valid_default_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("DEFAULT_TIMEZONE must be a valid IANA timezone") from exc
+        return value
+
     @model_validator(mode="after")
     def video_duration_range_is_valid(self) -> "Settings":
         if self.video_max_duration <= self.video_min_duration:
@@ -94,6 +138,11 @@ class Settings(BaseSettings):
             raise ValueError("PAUSE_KEEP_PADDING must preserve a removable pause interior")
         if self.visual_max_insert_duration < self.visual_min_insert_duration:
             raise ValueError("VISUAL_MAX_INSERT_DURATION must be >= VISUAL_MIN_INSERT_DURATION")
+        if (
+            self.assembly_target_visual_change_max_seconds
+            < self.assembly_target_visual_change_min_seconds
+        ):
+            raise ValueError("ASSEMBLY visual change max must be >= min")
         return self
 
 

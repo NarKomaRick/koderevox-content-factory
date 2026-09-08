@@ -9,12 +9,106 @@ from aiogram.types import (
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="🎬 Новый ролик"), KeyboardButton(text="📂 Мои ролики")],
             [KeyboardButton(text="➕ Новая идея"), KeyboardButton(text="📥 Контент-инбокс")],
             [KeyboardButton(text="📎 Добавить материалы"), KeyboardButton(text="🗂 Материалы")],
             [KeyboardButton(text="💡 Идеи"), KeyboardButton(text="📝 Черновики")],
-            [KeyboardButton(text="📅 Контент-план"), KeyboardButton(text="⚙️ Настройки")],
+            [KeyboardButton(text="📅 Публикации"), KeyboardButton(text="⚙️ Настройки")],
         ],
         resize_keyboard=True,
+    )
+
+
+def production_keyboard(project: dict[str, object]) -> InlineKeyboardMarkup:
+    project_id = str(project["id"])
+    rows = [
+        [
+            InlineKeyboardButton(
+                text="🧠 Развить идею", callback_data=f"prod_develop:{project_id}"
+            ),
+            InlineKeyboardButton(text="📝 Сценарий", callback_data=f"prod_script:{project_id}"),
+        ],
+        [
+            InlineKeyboardButton(
+                text="➕ Добавить материал", callback_data=f"prod_add:{project_id}"
+            ),
+            InlineKeyboardButton(text="📎 Материалы", callback_data=f"prod_materials:{project_id}"),
+        ],
+    ]
+    if project.get("primary_voiceover_id"):
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🎬 Начать монтаж", callback_data=f"prod_assemble:{project_id}"
+                )
+            ]
+        )
+    if project.get("active_timeline_revision_id"):
+        rows.extend(
+            [
+                [
+                    InlineKeyboardButton(
+                        text="👁 Preview", callback_data=f"prod_preview:{project_id}"
+                    ),
+                    InlineKeyboardButton(
+                        text="✅ Финализировать", callback_data=f"prod_final:{project_id}"
+                    ),
+                ],
+                [InlineKeyboardButton(text="📝 Правки", callback_data=f"prod_replan:{project_id}")],
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def production_list_keyboard(projects: list[dict[str, object]]) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"🎬 {str(project.get('working_title') or project.get('title'))[:45]}",
+                    callback_data=f"prod_open:{project['id']}",
+                )
+            ]
+            for project in projects[:20]
+        ]
+    )
+
+
+def script_version_keyboard(production_id: str, script_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Утвердить", callback_data=f"prod_approve:{production_id}:{script_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Изменить", callback_data=f"prod_script_edit:{production_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="➕ Дополнить", callback_data=f"prod_script_edit:{production_id}"
+                ),
+                InlineKeyboardButton(
+                    text="🔥 Сильнее начало", callback_data=f"prod_hook:{production_id}"
+                ),
+            ],
+        ]
+    )
+
+
+def setup_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🤖 AI", callback_data="setup:ai")],
+            [InlineKeyboardButton(text="🎙 Speech-to-Text", callback_data="setup:stt")],
+            [InlineKeyboardButton(text="🎨 Бренд", callback_data="setup:brand")],
+            [InlineKeyboardButton(text="⚙️ Render", callback_data="setup:render")],
+            [InlineKeyboardButton(text="🔐 Security", callback_data="setup:security")],
+            [InlineKeyboardButton(text="📊 Диагностика", callback_data="setup:diagnostics")],
+        ]
     )
 
 
@@ -28,6 +122,56 @@ def angle_keyboard(ideas: list[dict[str, object]]) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🔄 Ещё варианты", callback_data="ideas:more")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="ideas:cancel")],
         ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def tiktok_settings_keyboard(
+    variant_id: str, settings: dict[str, object], capabilities: dict[str, object]
+) -> InlineKeyboardMarkup:
+    privacy_labels = {
+        "PUBLIC_TO_EVERYONE": "Public",
+        "MUTUAL_FOLLOW_FRIENDS": "Friends",
+        "SELF_ONLY": "Only me",
+    }
+    privacy_codes = {
+        "PUBLIC_TO_EVERYONE": "p",
+        "MUTUAL_FOLLOW_FRIENDS": "f",
+        "SELF_ONLY": "s",
+    }
+    privacy_options_value = capabilities.get("privacy_level_options", [])
+    privacy_options = (
+        [str(value) for value in privacy_options_value]
+        if isinstance(privacy_options_value, list)
+        else []
+    )
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=("✅ " if settings.get("privacy_level") == value else "⬜ ")
+                + privacy_labels.get(value, value),
+                callback_data=f"ttps:{privacy_codes[value]}:{variant_id}",
+            )
+        ]
+        for value in privacy_options
+        if value in privacy_codes
+    ]
+    for code, setting, label, disabled_capability in (
+        ("c", "disable_comment", "Комментарии", "comment_disabled"),
+        ("d", "disable_duet", "Duet", "duet_disabled"),
+        ("s", "disable_stitch", "Stitch", "stitch_disabled"),
+    ):
+        if not capabilities.get(disabled_capability):
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{label}: {'Off' if settings.get(setting) else 'On'}",
+                        callback_data=f"ttop:{code}:{variant_id}",
+                    )
+                ]
+            )
+    rows.append(
+        [InlineKeyboardButton(text="✅ Подтвердить настройки", callback_data=f"ttok:{variant_id}")]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -152,6 +296,141 @@ def video_plan_keyboard(video_project_id: str) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def approved_video_keyboard(video_project_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📤 Опубликовать", callback_data=f"video_publish:{video_project_id}"
+                )
+            ]
+        ]
+    )
+
+
+def platform_selection_keyboard(video_project_id: str, selected: set[str]) -> InlineKeyboardMarkup:
+    labels = {"telegram": "Telegram", "youtube": "YouTube", "tiktok": "TikTok"}
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"{'✅' if platform in selected else '⬜'} {label}",
+                    callback_data=f"pubtoggle:{platform}:{video_project_id}",
+                )
+            ]
+            for platform, label in labels.items()
+        ]
+        + [
+            [
+                InlineKeyboardButton(
+                    text="Продолжить →", callback_data=f"pubprepare:{video_project_id}"
+                )
+            ]
+        ]
+    )
+
+
+def publication_preview_keyboard(
+    package_id: str, variants: list[dict[str, object]]
+) -> InlineKeyboardMarkup:
+    labels = {"telegram": "Telegram", "youtube": "YouTube", "tiktok": "TikTok"}
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"✏️ {labels.get(str(item['platform']), item['platform'])}",
+                callback_data=f"pubedit:{item['id']}",
+            )
+        ]
+        for item in variants
+    ]
+    for item in variants:
+        if item["platform"] == "tiktok":
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="⚙️ TikTok visibility",
+                        callback_data=f"pubtiktok:{item['id']}",
+                    )
+                ]
+            )
+    rows.extend(
+        [
+            [InlineKeyboardButton(text="✅ Всё хорошо", callback_data=f"pubready:{package_id}")],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Перегенерировать тексты", callback_data=f"pubregen:{package_id}"
+                )
+            ],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def publication_time_keyboard(package_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Сейчас", callback_data=f"pubnow:{package_id}")],
+            [
+                InlineKeyboardButton(text="Сегодня", callback_data=f"pubday:0:{package_id}"),
+                InlineKeyboardButton(text="Завтра", callback_data=f"pubday:1:{package_id}"),
+            ],
+            [InlineKeyboardButton(text="📅 Выбрать дату", callback_data=f"pubdate:{package_id}")],
+        ]
+    )
+
+
+def publication_detail_keyboard(publication: dict[str, object]) -> InlineKeyboardMarkup:
+    publication_id = str(publication["id"])
+    status = str(publication["status"])
+    rows: list[list[InlineKeyboardButton]] = []
+    if status in {"draft", "scheduled", "queued", "retry_wait"}:
+        rows.append(
+            [InlineKeyboardButton(text="✏️ Тексты", callback_data=f"pubcontent:{publication_id}")]
+        )
+    if status in {"draft", "scheduled", "retry_wait"}:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⏰ Изменить время", callback_data=f"pubresched:{publication_id}"
+                )
+            ]
+        )
+    if status in {"draft", "scheduled", "queued", "retry_wait"}:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🚀 Опубликовать сейчас", callback_data=f"pubrun:{publication_id}"
+                ),
+                InlineKeyboardButton(
+                    text="❌ Отменить", callback_data=f"pubcancel:{publication_id}"
+                ),
+            ]
+        )
+    if status == "failed":
+        rows.append(
+            [InlineKeyboardButton(text="🔄 Повторить", callback_data=f"pubretry:{publication_id}")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def publications_filter_keyboard(items: list[dict[str, object]]) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="⏳ Запланированные", callback_data="publist:scheduled"),
+            InlineKeyboardButton(text="🚀 Публикуются", callback_data="publist:publishing"),
+        ],
+        [
+            InlineKeyboardButton(text="✅ Опубликованные", callback_data="publist:published"),
+            InlineKeyboardButton(text="❌ Ошибки", callback_data="publist:failed"),
+        ],
+    ]
+    rows.extend(
+        [InlineKeyboardButton(text=f"Открыть {index}", callback_data=f"pubopen:{item['id']}")]
+        for index, item in enumerate(items[:10], start=1)
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def visual_suggestions_keyboard(video_project_id: str) -> InlineKeyboardMarkup:

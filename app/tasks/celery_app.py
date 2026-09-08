@@ -7,7 +7,7 @@ celery_app = Celery(
     "content_factory",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["app.tasks.processing", "app.tasks.rendering"],
+    include=["app.tasks.processing", "app.tasks.rendering", "app.tasks.publishing"],
 )
 celery_app.conf.update(
     task_serializer="json",
@@ -21,6 +21,10 @@ celery_app.conf.update(
         "content_factory.process_source": {"queue": "media"},
         "content_factory.process_source_note": {"queue": "media"},
         "content_factory.render_video": {"queue": "render"},
+        "content_factory.render_production": {"queue": "render"},
+        "content_factory.render_platform_variant": {"queue": "render"},
+        "content_factory.publish": {"queue": "publish"},
+        "content_factory.poll_publication": {"queue": "publish"},
     },
 )
 

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -44,6 +45,123 @@ class BackendClient:
         if query:
             params["query"] = query
         return await self._request("GET", "/assets", params=params)
+
+    async def create_production(self, source: dict[str, Any], title: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/production-projects",
+            json={
+                "project_id": source["project_id"],
+                "user_id": source["user_id"],
+                "initial_source_item_id": source["id"],
+                "title": title,
+                "target_format": "short_video",
+            },
+        )
+
+    async def list_productions(self, telegram_user_id: int) -> list[dict[str, Any]]:
+        return await self._request("GET", f"/production-projects/telegram-user/{telegram_user_id}")
+
+    async def get_production(self, production_id: str) -> dict[str, Any]:
+        return await self._request("GET", f"/production-projects/{production_id}")
+
+    async def attach_production_material(
+        self,
+        production_id: str,
+        *,
+        source_item_id: str,
+        roles: list[str],
+        instruction: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/production-projects/{production_id}/materials",
+            json={
+                "source_item_id": source_item_id,
+                "roles": roles,
+                "user_instruction": instruction,
+            },
+        )
+
+    async def production_materials(
+        self, production_id: str, used: bool | None = None
+    ) -> list[dict[str, Any]]:
+        params = {"used": str(used).lower()} if used is not None else None
+        return await self._request(
+            "GET", f"/production-projects/{production_id}/materials", params=params
+        )
+
+    async def generate_production_script(self, production_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/production-projects/{production_id}/scripts/generate")
+
+    async def edit_production_script(self, production_id: str, instruction: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/production-projects/{production_id}/scripts/edit",
+            json={"instruction": instruction},
+        )
+
+    async def approve_production_script(self, production_id: str, script_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST", f"/production-projects/{production_id}/scripts/{script_id}/approve"
+        )
+
+    async def assemble_production(self, production_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/production-projects/{production_id}/assembly")
+
+    async def replan_production(self, production_id: str, instruction: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/production-projects/{production_id}/replan",
+            json={"instruction": instruction},
+        )
+
+    async def render_production(self, production_id: str, profile: str) -> dict[str, Any]:
+        return await self._request("POST", f"/production-projects/{production_id}/render/{profile}")
+
+    async def setup_ai(
+        self,
+        *,
+        telegram_user_id: int,
+        base_url: str,
+        model: str,
+        api_key: str | None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            "/setup/ai/test-and-activate",
+            json={
+                "telegram_user_id": telegram_user_id,
+                "private_chat": True,
+                "provider": "openai_compatible",
+                "base_url": base_url,
+                "model": model,
+                "api_key": api_key,
+            },
+        )
+
+    async def select_production_placement(
+        self, material_id: str, candidate_index: int
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/production-projects/materials/{material_id}/placement",
+            json={"candidate_index": candidate_index},
+        )
+
+    async def setup_summary(self, telegram_user_id: int) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/setup/summary",
+            params={"telegram_user_id": telegram_user_id, "private_chat": "true"},
+        )
+
+    async def setup_diagnostics(self, telegram_user_id: int) -> dict[str, str]:
+        return await self._request(
+            "GET",
+            "/setup/diagnostics",
+            params={"telegram_user_id": telegram_user_id, "private_chat": "true"},
+        )
 
     async def suggest_visuals(self, video_project_id: str) -> dict[str, Any]:
         return await self._request(
@@ -197,6 +315,72 @@ class BackendClient:
 
     async def approve_video(self, video_project_id: str) -> dict[str, Any]:
         return await self._request("POST", f"/video-projects/{video_project_id}/approve")
+
+    async def prepare_publish_package(
+        self, video_project_id: str, platforms: list[str], regenerate: bool = False
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/video-projects/{video_project_id}/publish-package",
+            json={"platforms": platforms, "regenerate": regenerate},
+        )
+
+    async def get_publish_package(self, package_id: str) -> dict[str, Any]:
+        return await self._request("GET", f"/publish-packages/{package_id}")
+
+    async def update_platform_variant(self, variant_id: str, **fields: Any) -> dict[str, Any]:
+        return await self._request("PATCH", f"/platform-variants/{variant_id}", json=fields)
+
+    async def list_platform_accounts(
+        self, project_id: str, platform: str | None = None
+    ) -> list[dict[str, Any]]:
+        params = {"project_id": project_id}
+        if platform:
+            params["platform"] = platform
+        return await self._request("GET", "/platform-accounts", params=params)
+
+    async def create_publications(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        return await self._request("POST", "/publications/batch", json={"items": items})
+
+    async def validate_platform_variant(self, variant_id: str, account_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/platform-variants/{variant_id}/validate",
+            params={"account_id": account_id},
+        )
+
+    async def prepare_platform_variant_media(self, variant_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/platform-variants/{variant_id}/prepare-media")
+
+    async def list_publications(self, status: str | None = None) -> list[dict[str, Any]]:
+        params = {"status_filter": status} if status else None
+        return await self._request("GET", "/publications", params=params)
+
+    async def get_publication(self, publication_id: str) -> dict[str, Any]:
+        return await self._request("GET", f"/publications/{publication_id}")
+
+    async def reschedule_publication(
+        self, publication_id: str, scheduled_at: datetime
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/publications/{publication_id}/schedule",
+            json={"scheduled_at": scheduled_at.isoformat()},
+        )
+
+    async def update_publication_content(
+        self, publication_id: str, **fields: Any
+    ) -> dict[str, Any]:
+        return await self._request("PATCH", f"/publications/{publication_id}/content", json=fields)
+
+    async def publish_now(self, publication_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/publications/{publication_id}/publish-now")
+
+    async def cancel_publication(self, publication_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/publications/{publication_id}/cancel")
+
+    async def retry_publication(self, publication_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/publications/{publication_id}/retry")
 
     async def archive_video(self, video_project_id: str) -> dict[str, Any]:
         return await self._request("POST", f"/video-projects/{video_project_id}/archive")

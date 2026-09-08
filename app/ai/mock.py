@@ -9,6 +9,8 @@ from app.schemas.ai import (
     RepurposedItem,
     ShortScript,
 )
+from app.schemas.production import ScriptGeneration
+from app.schemas.publishing import PlatformAdaptationOutput
 from app.schemas.video import EditPlan, VideoConceptBatch
 
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -25,7 +27,74 @@ class MockAIProvider:
         response_model: type[OutputT],
     ) -> OutputT:
         data: object
-        if response_model is ContentIntelligence:
+        if response_model is ScriptGeneration:
+            current = user_prompt.partition("CURRENT_SCRIPT:\n")[2].partition(
+                "\n\nUSER_INSTRUCTION"
+            )[0]
+            instruction = user_prompt.partition("USER_INSTRUCTION:\n")[2].partition("\n\n")[0]
+            if current:
+                if "BestWay" in instruction or "бест" in instruction.casefold():
+                    content = current + "\nНапример, в BestWay backend изолирует приложение от 1С."
+                elif "начал" in instruction.casefold() or "скуч" in instruction.casefold():
+                    content = "Прямой запрос в 1С может сломать приложение за секунду.\n" + current
+                elif "цен" in instruction.casefold():
+                    content = "\n".join(
+                        line for line in current.splitlines() if "цен" not in line.casefold()
+                    )
+                else:
+                    content = current + "\n" + instruction.strip()
+            else:
+                content = (
+                    "Приложение не должно напрямую зависеть от 1С.\n"
+                    "Прямая связь делает мобильный клиент зависимым от структуры "
+                    "и доступности 1С.\n"
+                    "Backend со стабильным REST API проверяет данные, кэширует ответы "
+                    "и гасит сбои.\n"
+                    "Так приложение остаётся быстрым, а интеграция — управляемой."
+                )
+            data = {
+                "content": content,
+                "sections": [
+                    {"id": f"section_{index}", "text": line, "order": index}
+                    for index, line in enumerate(content.splitlines(), start=1)
+                    if line.strip()
+                ],
+            }
+        elif response_model is PlatformAdaptationOutput:
+            if "TARGET_PLATFORM=telegram" in user_prompt:
+                data = {
+                    "title": "Почему приложение отправляло запрос дважды",
+                    "caption": (
+                        "Нашли причину двойного REST-запроса: повторный вызов был связан с "
+                        "жизненным циклом экрана. Разбираем, где ставить защиту от дублей."
+                    ),
+                    "description": (
+                        "При возврате на экран приложение повторяло запрос, а 1С создавала "
+                        "дубли. В посте — технический контекст и вывод про идемпотентность."
+                    ),
+                    "hashtags": ["разработка", "REST", "идемпотентность"],
+                    "call_to_action": "Проверьте повторные вызовы в lifecycle вашего экрана.",
+                }
+            elif "TARGET_PLATFORM=tiktok" in user_prompt:
+                data = {
+                    "title": "Откуда взялся второй запрос",
+                    "caption": "Вернулся на экран — получил дубль в 1С. Вот где спрятался баг.",
+                    "description": "Короткий разбор двойного REST-запроса.",
+                    "hashtags": ["код", "баг", "REST"],
+                    "call_to_action": "Сохрани, чтобы проверить свой lifecycle.",
+                }
+            else:
+                data = {
+                    "title": "Почему приложение дважды отправляло REST-запрос",
+                    "caption": "",
+                    "description": (
+                        "Разбираем баг жизненного цикла экрана, из-за которого 1С получала "
+                        "две одинаковые записи, и объясняем роль идемпотентности API."
+                    ),
+                    "hashtags": ["REST", "mobiledevelopment", "backend"],
+                    "call_to_action": "Подпишитесь на инженерные разборы.",
+                }
+        elif response_model is ContentIntelligence:
             data = {
                 "topic": "Дублирующиеся REST-запросы при возврате на экран",
                 "summary": (

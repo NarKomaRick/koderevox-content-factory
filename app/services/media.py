@@ -57,7 +57,36 @@ class FFmpegMediaProcessor:
         return destination
 
     async def normalize_audio(self, source: Path, destination: Path) -> Path:
-        return await self.extract_audio(source, destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # Gentle voice preparation: trim only edge silence, light compression and limiter.
+        filters = (
+            "silenceremove=start_periods=1:start_silence=0.12:start_threshold=-55dB,"
+            "areverse,"
+            "silenceremove=start_periods=1:start_silence=0.12:start_threshold=-55dB,"
+            "areverse,acompressor=threshold=-18dB:ratio=2:attack=20:release=200,"
+            "loudnorm=I=-16:LRA=11:TP=-1.5,alimiter=limit=0.95"
+        )
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source),
+            "-vn",
+            "-af",
+            filters,
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            str(destination),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise MediaProcessingError(stderr.decode(errors="replace"))
+        await logger.ainfo("audio_normalized", source=str(source), destination=str(destination))
+        return destination
 
     @staticmethod
     def useful_metadata(probe: dict[str, Any]) -> dict[str, Any]:

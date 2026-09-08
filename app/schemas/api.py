@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.enums import (
     ContentFormat,
@@ -26,12 +27,25 @@ class ProjectCreate(BaseModel):
     brand_context: str = ""
     target_audience: str = ""
     language: str = "ru"
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
     vocabulary: list[str] = Field(default_factory=list)
     allow_external_vision: bool = False
     brand_preset: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timezone must be a valid IANA timezone") from exc
+        return value
+
 
 class ProjectRead(ProjectCreate, ORMModel):
+    timezone: str
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime
@@ -40,6 +54,18 @@ class ProjectRead(ProjectCreate, ORMModel):
 class ProjectUpdate(BaseModel):
     allow_external_vision: bool | None = None
     brand_preset: dict[str, Any] | None = None
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str | None) -> str:
+        if value is None:
+            raise ValueError("timezone cannot be null")
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("timezone must be a valid IANA timezone") from exc
+        return value
 
 
 class SourceCreate(BaseModel):

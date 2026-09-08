@@ -8,4 +8,7 @@ __pycache__/
 .coverage
 htmlcov/
 data/
+*.mp4
+debug-frames/
+smoke-output/
 *.egg-info/
