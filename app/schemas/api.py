@@ -27,12 +27,19 @@ class ProjectCreate(BaseModel):
     target_audience: str = ""
     language: str = "ru"
     vocabulary: list[str] = Field(default_factory=list)
+    allow_external_vision: bool = False
+    brand_preset: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectRead(ProjectCreate, ORMModel):
     id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+
+
+class ProjectUpdate(BaseModel):
+    allow_external_vision: bool | None = None
+    brand_preset: dict[str, Any] | None = None
 
 
 class SourceCreate(BaseModel):

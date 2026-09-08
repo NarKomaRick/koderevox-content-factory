@@ -10,6 +10,7 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="➕ Новая идея"), KeyboardButton(text="📥 Контент-инбокс")],
+            [KeyboardButton(text="📎 Добавить материалы"), KeyboardButton(text="🗂 Материалы")],
             [KeyboardButton(text="💡 Идеи"), KeyboardButton(text="📝 Черновики")],
             [KeyboardButton(text="📅 Контент-план"), KeyboardButton(text="⚙️ Настройки")],
         ],
@@ -136,7 +137,10 @@ def video_plan_keyboard(video_project_id: str) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="▶️ Собрать", callback_data=f"video_render:{video_project_id}"
-                )
+                ),
+                InlineKeyboardButton(
+                    text="🎨 Визуалы", callback_data=f"video_visuals:{video_project_id}"
+                ),
             ],
             [
                 InlineKeyboardButton(
@@ -144,6 +148,52 @@ def video_plan_keyboard(video_project_id: str) -> InlineKeyboardMarkup:
                 ),
                 InlineKeyboardButton(
                     text="🗑 Удалить", callback_data=f"video_archive:{video_project_id}"
+                ),
+            ],
+        ]
+    )
+
+
+def visual_suggestions_keyboard(video_project_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Применить все", callback_data=f"visual_apply:{video_project_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="➕ Добавить", callback_data=f"visual_manual:{video_project_id}"
+                ),
+                InlineKeyboardButton(
+                    text="✏️ Настроить", callback_data=f"visual_instruction:{video_project_id}"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🚫 Без вставок", callback_data=f"visual_none:{video_project_id}"
+                ),
+            ],
+        ]
+    )
+
+
+def thumbnail_keyboard(
+    items: list[dict[str, object]], video_project_id: str
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=str(index), callback_data=f"thumb_select:{item['id']}")
+                for index, item in enumerate(items[:3], start=1)
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✏️ Свой текст", callback_data=f"thumb_custom:{video_project_id}"
+                ),
+                InlineKeyboardButton(
+                    text="🔄 Другие", callback_data=f"thumb_more:{video_project_id}"
                 ),
             ],
         ]

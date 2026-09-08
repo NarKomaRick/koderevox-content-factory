@@ -2,8 +2,9 @@ import uuid
 
 from fastapi import APIRouter
 
-from app.api.dependencies import VideoProjectDep, VideoQueueDep
+from app.api.dependencies import VideoProjectDep, VideoQueueDep, VisualPlanDep
 from app.schemas.video import (
+    ApprovedPackage,
     EditPlanPatch,
     GenerateEditPlanRequest,
     RenderEnqueueResponse,
@@ -12,8 +13,60 @@ from app.schemas.video import (
     TranscriptOverrideUpdate,
     VideoProjectRead,
 )
+from app.schemas.visual import (
+    ManualVisualInsertion,
+    VisualInstructionRequest,
+    VisualPlan,
+    VisualPlanPatch,
+    VisualSuggestionRequest,
+)
 
 router = APIRouter(prefix="/video-projects", tags=["video-projects"])
+
+
+@router.get("/{video_project_id}/visual-plan", response_model=VisualPlan)
+async def get_visual_plan(video_project_id: uuid.UUID, service: VisualPlanDep) -> object:
+    return await service.get(video_project_id)
+
+
+@router.put("/{video_project_id}/visual-plan", response_model=VideoProjectRead)
+async def replace_visual_plan(
+    video_project_id: uuid.UUID, data: VisualPlanPatch, service: VisualPlanDep
+) -> object:
+    return await service.replace(video_project_id, data.visual_plan)
+
+
+@router.post("/{video_project_id}/visual-plan/insertions", response_model=VideoProjectRead)
+async def add_visual_insertion(
+    video_project_id: uuid.UUID, data: ManualVisualInsertion, service: VisualPlanDep
+) -> object:
+    return await service.add(video_project_id, data.insertion)
+
+
+@router.delete(
+    "/{video_project_id}/visual-plan/insertions/{index}",
+    response_model=VideoProjectRead,
+)
+async def remove_visual_insertion(
+    video_project_id: uuid.UUID, index: int, service: VisualPlanDep
+) -> object:
+    return await service.remove(video_project_id, index)
+
+
+@router.post("/{video_project_id}/visual-suggestions", response_model=VisualPlan)
+async def visual_suggestions(
+    video_project_id: uuid.UUID, data: VisualSuggestionRequest, service: VisualPlanDep
+) -> object:
+    return await service.suggest(video_project_id, data.instruction)
+
+
+@router.post("/{video_project_id}/visual-plan/instruction", response_model=VideoProjectRead)
+async def apply_visual_instruction(
+    video_project_id: uuid.UUID,
+    data: VisualInstructionRequest,
+    service: VisualPlanDep,
+) -> object:
+    return await service.apply_instruction(video_project_id, data.instruction)
 
 
 @router.get("", response_model=list[VideoProjectRead])
@@ -24,6 +77,11 @@ async def list_video_projects(service: VideoProjectDep) -> object:
 @router.get("/{video_project_id}", response_model=VideoProjectRead)
 async def get_video_project(video_project_id: uuid.UUID, service: VideoProjectDep) -> object:
     return await service.get(video_project_id)
+
+
+@router.get("/{video_project_id}/approved-package", response_model=ApprovedPackage)
+async def approved_package(video_project_id: uuid.UUID, service: VideoProjectDep) -> object:
+    return await service.approved_package(video_project_id)
 
 
 @router.post("/{video_project_id}/generate-edit-plan", response_model=VideoProjectRead)

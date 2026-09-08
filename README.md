@@ -550,7 +550,15 @@ Docker Compose использует named volumes:
 /ideas                    content angles
 /drafts                   сценарии и адаптации
 /video-projects           EditPlan, render, style, approve и archive
+/assets                   VisualAsset library, metadata search и explicit vision analysis
+/thumbnail-projects       три concepts, render previews и выбор обложки
 ```
+
+Ключевые Phase 4 mutations: `POST /assets` (multipart upload), `POST /assets/from-source`,
+`POST /assets/{id}/analyze`, `GET|PATCH|DELETE /assets/{id}`, `GET|PUT /video-projects/{id}/visual-plan`,
+`POST /video-projects/{id}/visual-suggestions`, `POST .../visual-plan/insertions`,
+`POST /thumbnail-projects/video-projects/{id}`, `POST /thumbnail-projects/{id}/select`,
+`GET /thumbnail-projects/{id}/file` и `GET /video-projects/{id}/approved-package`.
 
 Backend самодостаточен: Telegram является интерфейсом, а не местом бизнес-логики. В будущем n8n,
 web-панель или другой клиент смогут вызывать то же REST API.
@@ -571,7 +579,53 @@ python3.12 -m venv .venv
 Тесты покрывают ContentService, structured LLM output, permissions, ingestion, idempotency,
 обработку media/document/link, SSRF, Content Intelligence, Inbox, EditPlan, pause detection,
 субтитры, renderer, API и Telegram workflow. Отдельный smoke test создаёт настоящее видео через
-FFmpeg, собирает вертикальный MP4 и проверяет его через ffprobe.
+FFmpeg, собирает вертикальный MP4 и проверяет его через ffprobe. Phase 4 smoke дополнительно
+композитит screenshot, PiP, screen recording и code card, извлекает пять контрольных кадров и
+проверяет фактические изменения пикселей. Thumbnail smoke создаёт настоящий JPEG 1280×720.
+
+## Phase 4: Visual Intelligence
+
+`VisualAsset` хранит оригинал, безопасно подготовленную копию/thumbnail, OCR, структурированный
+`AssetIntelligence`, tags, licensing metadata и историю использования. Изображения, UI, code,
+screen recordings, diagrams и дополнительные видео не сводятся к одному image-only типу.
+
+Pipeline рендера:
+
+```text
+EditPlan -> base vertical video -> validated VisualPlan -> ASS subtitles -> branding -> H.264/AAC
+```
+
+Поддерживаются `FULLSCREEN`, `PICTURE_IN_PICTURE`, `SIDE_BY_SIDE`, `BACKGROUND`, `DEVICE_FRAME` и
+`CODE_CARD`. Screen recording audio по умолчанию не мапится. Optional broken insert пропускается,
+required insert останавливает render. `AssetUsage` записывается идемпотентно.
+
+Vision полностью optional. Upload никогда сам по себе не отправляет файл внешнему провайдеру:
+это делает только явный `POST /assets/{id}/analyze`, причём проект должен иметь
+`allow_external_vision=true`. Локальный OCR работает независимо и мягко отключается, если
+Tesseract отсутствует.
+
+Автоматический flow не отправляет media во внешний AI: после загрузки asset получает локальные
+metadata/OCR и conservative intelligence. Внешний Vision запускается только явным analyze-запросом
+и проходит проверку `Project.allow_external_vision`; при запрете файл не покидает storage.
+
+После Phase 3 кнопка `🎨 Визуалы` сначала ограничивает retrieval текущим project и metadata search
+(title/description/tags/OCR), затем optional LLM выбирает только из найденных кандидатов. При
+отключённом/недоступном LLM работает deterministic fallback. Кнопки `Применить все`, `Настроить`,
+`Добавить` и `Без вставок` сохраняют контроль человека.
+
+Ограничения по умолчанию: вставка 1.5–8 секунд, gap минимум 2 секунды, до 10 вставок в минуту.
+Значения меняются через `VISUAL_*`; optional insertion пропускается при повреждении файла, required
+insertion переводит render в ошибку. Original asset всегда сохраняется отдельно от processed/cache.
+
+```dotenv
+VISION_ENABLED=false
+VISION_PROVIDER=openai_compatible
+VISION_BASE_URL=
+VISION_API_KEY=
+VISION_MODEL=
+OCR_ENABLED=true
+OCR_LANGUAGE=rus+eng
+```
 
 ### Очереди Celery
 
@@ -672,7 +726,7 @@ mapping в Docker Compose. Одного значения `STT_DEVICE=cuda` не�
 - scheduler и social analytics;
 - web dashboard и полноценный timeline editor;
 - face tracking и multi-camera монтаж;
-- AI/stock B-roll, музыка, thumbnails и сложная motion graphics;
+- generative/stock B-roll, автоматическая музыка и сложная motion graphics;
 - OCR сканированных PDF;
 - vector database и semantic search;
 - S3/MinIO backend.
@@ -682,7 +736,7 @@ mapping в Docker Compose. Одного значения `STT_DEVICE=cuda` не�
 
 Архитектура уже сохраняет исходное видео, извлечённое аудио, timestamps слов, ContentDraft,
 validated EditPlan, overrides, framing, render settings, debug frames и approved MP4. Это база для
-следующего этапа: B-roll, скриншоты, screen recordings, изображения и brand templates.
+следующего этапа: publishing queue, scheduler и platform adaptations.
 
 ## Безопасность и приватность
 
@@ -690,7 +744,8 @@ validated EditPlan, overrides, framing, render settings, debug frames и approve
 - Telegram доступен только user ID из whitelist.
 - API keys не выводятся в structured logs.
 - Media blobs не хранятся в PostgreSQL.
-- Video/audio bytes не передаются в LLM.
+- Video/audio bytes не передаются в LLM. Image bytes уходят во внешний Vision только по явному
+  запросу и при `allow_external_vision=true`.
 - URL проходят DNS- и redirect-проверки против SSRF.
 - Пользовательские имена файлов не используются как доверенные storage paths.
 

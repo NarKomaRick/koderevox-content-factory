@@ -5,7 +5,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.filters.state import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message, Update
+from aiogram.types import BufferedInputFile, CallbackQuery, Message, Update
 
 from app.bot.api_client import BackendClient
 from app.bot.formatters import (
@@ -26,11 +26,13 @@ from app.bot.keyboards import (
     inbox_keyboard,
     main_menu,
     source_detail_keyboard,
+    thumbnail_keyboard,
     video_concepts_keyboard,
     video_edit_keyboard,
     video_plan_keyboard,
     video_style_keyboard,
     video_text_keyboard,
+    visual_suggestions_keyboard,
 )
 
 logger = structlog.get_logger()
@@ -51,6 +53,13 @@ class VideoEditFlow(StatesGroup):
     waiting_for_instruction = State()
     waiting_for_subtitle_replacement = State()
     waiting_for_manual_range = State()
+    waiting_for_thumbnail_text = State()
+    waiting_for_visual_manual = State()
+    waiting_for_visual_instruction = State()
+
+
+class AssetFlow(StatesGroup):
+    waiting_for_material = State()
 
 
 @router.message(CommandStart())
@@ -95,6 +104,49 @@ async def daily_digest(message: Message, backend: BackendClient) -> None:
 async def new_idea(message: Message, state: FSMContext) -> None:
     await state.set_state(IdeaFlow.waiting_for_text)
     await message.answer("Отправьте мысль одним сообщением.")
+
+
+@router.message(F.text == "📎 Добавить материалы")
+async def request_asset(message: Message, state: FSMContext) -> None:
+    await state.set_state(AssetFlow.waiting_for_material)
+    await message.answer(
+        "Отправьте screenshot, photo, screen recording, logo, UI, код или видео. "
+        "Комментарий в caption станет описанием. Проект по умолчанию — Koderevox."
+    )
+
+
+@router.message(F.text == "🗂 Материалы")
+async def show_assets(message: Message, backend: BackendClient) -> None:
+    projects = await backend.list_projects()
+    if not projects:
+        await message.answer("Сначала создайте проект.")
+        return
+    project = next((item for item in projects if item["name"] == "Koderevox"), projects[0])
+    assets = await backend.list_assets(project["id"])
+    if not assets:
+        await message.answer("🗂 В Asset Library пока нет материалов.")
+        return
+    lines = ["🗂 Материалы"]
+    for index, asset in enumerate(assets[:10], start=1):
+        dimensions = f"{asset.get('width') or '—'}×{asset.get('height') or '—'}"
+        lines.append(
+            f"\n{index}. {asset['title']}\n{asset['type']} · {dimensions}\n"
+            f"Tags: {', '.join(asset.get('tags') or []) or '—'}"
+        )
+    await message.answer("\n".join(lines))
+
+
+@router.message(
+    AssetFlow.waiting_for_material,
+    F.content_type.in_({"video", "photo", "document"}),
+)
+async def receive_asset(
+    message: Message, event_update: Update, state: FSMContext, backend: BackendClient
+) -> None:
+    payload = build_source_payload(message, event_update.update_id)
+    await backend.ingest(payload)
+    await state.clear()
+    await message.answer("📎 Материал принят. После processing он появится в Asset Library.")
 
 
 @router.message(IdeaFlow.waiting_for_text, F.text)
@@ -335,6 +387,166 @@ async def render_video(callback: CallbackQuery, backend: BackendClient) -> None:
     except httpx.HTTPError as exc:
         await logger.aexception("telegram_render_enqueue_failed", error_type=type(exc).__name__)
         await callback.message.answer("Не удалось запустить рендер. План монтажа сохранён.")
+
+
+@router.callback_query(F.data.startswith("video_visuals:"))
+async def suggest_video_visuals(
+    callback: CallbackQuery, state: FSMContext, backend: BackendClient
+) -> None:
+    await callback.answer()
+    if not isinstance(callback.message, Message) or not callback.data:
+        return
+    project_id = callback.data.split(":", 1)[1]
+    plan = await backend.suggest_visuals(project_id)
+    await state.update_data(visual_suggestion=plan, video_project_id=project_id)
+    lines = [f"🤖 Нашёл {len(plan['insertions'])} подходящие вставки:"]
+    for index, item in enumerate(plan["insertions"], start=1):
+        lines.append(
+            f"\n{index}. {item['start']:.1f}–{item['end']:.1f}\n{item['role']} · {item['layout']}"
+        )
+    await callback.message.answer(
+        "\n".join(lines), reply_markup=visual_suggestions_keyboard(project_id)
+    )
+
+
+@router.callback_query(F.data.startswith("visual_apply:"))
+async def apply_visuals(callback: CallbackQuery, state: FSMContext, backend: BackendClient) -> None:
+    await callback.answer("Применено")
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    project_id = callback.data.split(":", 1)[1]
+    plan = (await state.get_data()).get("visual_suggestion")
+    if plan:
+        await backend.set_visual_plan(project_id, plan)
+    await callback.message.answer("VisualPlan сохранён. Нажмите «Пересобрать».")
+
+
+@router.callback_query(F.data.startswith("visual_none:"))
+async def remove_all_visuals(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        project_id = callback.data.split(":", 1)[1]
+        await backend.set_visual_plan(
+            project_id,
+            {"insertions": [], "reasoning_summary": "user disabled"},
+        )
+        await callback.message.answer("Ролик останется без B-roll.")
+
+
+@router.callback_query(F.data.startswith("visual_manual:"))
+async def request_manual_visual(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        await state.set_state(VideoEditFlow.waiting_for_visual_manual)
+        await state.update_data(video_project_id=callback.data.split(":", 1)[1])
+        await callback.message.answer(
+            "Формат: asset UUID | 00:12-00:16 | fullscreen. "
+            "Layouts: fullscreen, picture_in_picture, side_by_side, device_frame, code_card."
+        )
+
+
+@router.message(VideoEditFlow.waiting_for_visual_manual, F.text)
+async def add_manual_visual(message: Message, state: FSMContext, backend: BackendClient) -> None:
+    project_id = (await state.get_data()).get("video_project_id")
+    try:
+        raw_asset, raw_range, layout = [part.strip() for part in (message.text or "").split("|")]
+        raw_start, raw_end = raw_range.split("-", 1)
+        start, end = _timestamp_seconds(raw_start), _timestamp_seconds(raw_end)
+        if end <= start:
+            raise ValueError
+    except ValueError:
+        await message.answer("Не понял. Пример: UUID | 00:12-00:16 | fullscreen")
+        return
+    await backend.add_visual(
+        str(project_id),
+        {
+            "asset_id": raw_asset,
+            "start": start,
+            "end": end,
+            "layout": layout,
+            "role": "manual",
+            "reason": "user selected",
+            "required": True,
+        },
+    )
+    await state.clear()
+    await message.answer("Visual добавлен как обязательный. Пересоберите ролик.")
+
+
+@router.callback_query(F.data.startswith("visual_instruction:"))
+async def request_visual_instruction(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        await state.set_state(VideoEditFlow.waiting_for_visual_instruction)
+        await state.update_data(video_project_id=callback.data.split(":", 1)[1])
+        await callback.message.answer(
+            "Напишите: «Убери второй скрин», «Не показывай код» "
+            "или «Сделай screen recording на весь экран»."
+        )
+
+
+@router.message(VideoEditFlow.waiting_for_visual_instruction, F.text)
+async def apply_visual_instruction(
+    message: Message, state: FSMContext, backend: BackendClient
+) -> None:
+    project_id = (await state.get_data()).get("video_project_id")
+    await backend.edit_visuals(str(project_id), message.text or "")
+    await state.clear()
+    await message.answer("VisualPlan обновлён без изменения EditPlan.")
+
+
+@router.callback_query(F.data.startswith("video_thumbnail:"))
+@router.callback_query(F.data.startswith("thumb_more:"))
+async def show_thumbnails(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if not callback.data or not isinstance(callback.message, Message):
+        return
+    project_id = callback.data.split(":", 1)[1]
+    items = await backend.generate_thumbnails(project_id)
+    lines = ["🖼 Три варианта обложки:"]
+    lines.extend(f"{index}. {item['concept']['headline']}" for index, item in enumerate(items, 1))
+    for index, item in enumerate(items, start=1):
+        preview = await backend.download_thumbnail(item["id"])
+        await callback.message.answer_photo(
+            BufferedInputFile(preview, filename=f"cover-{index}.jpg"),
+            caption=f"{index}. {item['concept']['headline']}",
+        )
+    await callback.message.answer(
+        "\n".join(lines), reply_markup=thumbnail_keyboard(items, project_id)
+    )
+
+
+@router.callback_query(F.data.startswith("thumb_select:"))
+async def select_thumbnail(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer("Выбрано")
+    if callback.data and isinstance(callback.message, Message):
+        await backend.select_thumbnail(callback.data.split(":", 1)[1])
+        await callback.message.answer("Обложка выбрана ✅")
+
+
+@router.callback_query(F.data.startswith("thumb_custom:"))
+async def request_custom_thumbnail(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        await state.set_state(VideoEditFlow.waiting_for_thumbnail_text)
+        await state.update_data(video_project_id=callback.data.split(":", 1)[1])
+        await callback.message.answer("Введите заголовок обложки: 2–6 точных слов.")
+
+
+@router.message(VideoEditFlow.waiting_for_thumbnail_text, F.text)
+async def custom_thumbnail(message: Message, state: FSMContext, backend: BackendClient) -> None:
+    project_id = (await state.get_data()).get("video_project_id")
+    if not project_id:
+        await state.clear()
+        return
+    items = await backend.generate_thumbnails(str(project_id), message.text or "")
+    await state.clear()
+    preview = await backend.download_thumbnail(items[0]["id"])
+    await message.answer_photo(
+        BufferedInputFile(preview, filename="cover-custom.jpg"),
+        caption=items[0]["concept"]["headline"],
+        reply_markup=thumbnail_keyboard(items, str(project_id)),
+    )
 
 
 @router.callback_query(F.data.startswith("video_approve:"))

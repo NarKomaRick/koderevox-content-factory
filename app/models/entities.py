@@ -20,6 +20,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.models.enums import (
+    AssetStatus,
+    AssetType,
     ContentFormat,
     ContentPillar,
     DraftStatus,
@@ -28,6 +30,7 @@ from app.models.enums import (
     ProcessingStage,
     SourceStatus,
     SourceType,
+    ThumbnailStatus,
     UserRole,
     VideoProjectStatus,
 )
@@ -71,6 +74,8 @@ class Project(Base):
     target_audience: Mapped[str] = mapped_column(Text, default="")
     language: Mapped[str] = mapped_column(String(16), default="ru")
     vocabulary: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    allow_external_vision: Mapped[bool] = mapped_column(default=False)
+    brand_preset: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc, onupdate=now_utc
@@ -220,6 +225,7 @@ class VideoProject(Base):
     concepts: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, default=list)
     selected_concept: Mapped[int | None] = mapped_column(Integer)
     edit_plan: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    visual_plan: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
     subtitle_style: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
     render_settings: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
     transcript_overrides: Mapped[dict[str, str]] = mapped_column(JSON_DOCUMENT, default=dict)
@@ -229,6 +235,7 @@ class VideoProject(Base):
     render_task_id: Mapped[str | None] = mapped_column(String(255))
     render_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
     metrics: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    selected_thumbnail_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=now_utc, onupdate=now_utc
@@ -237,3 +244,97 @@ class VideoProject(Base):
     project: Mapped[Project] = relationship()
     source_item: Mapped[SourceItem] = relationship()
     content_draft: Mapped[ContentDraft | None] = relationship()
+
+
+class VisualAsset(Base):
+    __tablename__ = "visual_assets"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    source_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("source_items.id", ondelete="SET NULL"), index=True
+    )
+    parent_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("visual_assets.id", ondelete="SET NULL"), index=True
+    )
+    type: Mapped[AssetType] = enum_column(AssetType, AssetType.IMAGE)
+    status: Mapped[AssetStatus] = enum_column(AssetStatus, AssetStatus.PROCESSING)
+    original_path: Mapped[str] = mapped_column(String(1024))
+    processed_path: Mapped[str | None] = mapped_column(String(1024))
+    thumbnail_path: Mapped[str | None] = mapped_column(String(1024))
+    filename: Mapped[str] = mapped_column(String(512))
+    mime_type: Mapped[str] = mapped_column(String(255))
+    file_size: Mapped[int] = mapped_column(BigInteger)
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    duration: Mapped[float | None] = mapped_column(Float)
+    title: Mapped[str] = mapped_column(String(500), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    analysis: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    favorite: Mapped[bool] = mapped_column(default=False, index=True)
+    license_type: Mapped[str | None] = mapped_column(String(100))
+    source: Mapped[str | None] = mapped_column(String(1024))
+    author: Mapped[str | None] = mapped_column(String(255))
+    attribution_required: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+    project: Mapped[Project] = relationship()
+    source_item: Mapped[SourceItem | None] = relationship()
+    parent_asset: Mapped["VisualAsset | None"] = relationship(remote_side="VisualAsset.id")
+
+
+class AssetUsage(Base):
+    __tablename__ = "asset_usages"
+    __table_args__ = (
+        UniqueConstraint(
+            "asset_id",
+            "video_project_id",
+            "start",
+            "end",
+            "usage_type",
+            name="uq_asset_usage_timeline",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("visual_assets.id", ondelete="CASCADE"), index=True
+    )
+    video_project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("video_projects.id", ondelete="CASCADE"), index=True
+    )
+    start: Mapped[float] = mapped_column(Float)
+    end: Mapped[float] = mapped_column(Float)
+    usage_type: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    asset: Mapped[VisualAsset] = relationship()
+    video_project: Mapped[VideoProject] = relationship()
+
+
+class ThumbnailProject(Base):
+    __tablename__ = "thumbnail_projects"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    video_project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("video_projects.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[ThumbnailStatus] = enum_column(ThumbnailStatus, ThumbnailStatus.DRAFT)
+    concept: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    render_settings: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    output_path: Mapped[str | None] = mapped_column(String(1024))
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    render_fingerprint: Mapped[str | None] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+    project: Mapped[Project] = relationship()
+    video_project: Mapped[VideoProject] = relationship()

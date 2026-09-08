@@ -98,3 +98,52 @@ class SubtitlePreset(StrEnum):
     CLEAN = "clean"
     DYNAMIC = "dynamic"
     TECH = "tech"
+
+
+class AssetType(StrEnum):
+    IMAGE = "image"
+    SCREENSHOT = "screenshot"
+    SCREEN_RECORDING = "screen_recording"
+    VIDEO = "video"
+    CODE = "code"
+    LOGO = "logo"
+    DIAGRAM = "diagram"
+    DOCUMENT_PAGE = "document_page"
+    GENERATED_GRAPHIC = "generated_graphic"
+
+
+class AssetStatus(StrEnum):
+    PROCESSING = "processing"
+    READY = "ready"
+    FAILED = "failed"
+    ARCHIVED = "archived"
+
+
+class VisualLayout(StrEnum):
+    FULLSCREEN = "fullscreen"
+    PICTURE_IN_PICTURE = "picture_in_picture"
+    SIDE_BY_SIDE = "side_by_side"
+    BACKGROUND = "background"
+    DEVICE_FRAME = "device_frame"
+    CODE_CARD = "code_card"
+
+
+class VisualTransition(StrEnum):
+    NONE = "none"
+    FADE = "fade"
+    SCALE_IN = "scale_in"
+    SLIDE = "slide"
+
+
+class ThumbnailStatus(StrEnum):
+    DRAFT = "draft"
+    RENDERING = "rendering"
+    RENDERED = "rendered"
+    SELECTED = "selected"
+    FAILED = "failed"
+
+
+class ThumbnailPreset(StrEnum):
+    TECH_DARK = "tech_dark"
+    CLEAN_LIGHT = "clean_light"
+    PRODUCT = "product"

@@ -21,7 +21,7 @@ from app.models.enums import (
     UserRole,
 )
 from app.schemas.ai import ContentAngleBatch, RepurposeBundle, RepurposedItem, ShortScript
-from app.schemas.api import ProjectCreate, SourceCreate
+from app.schemas.api import ProjectCreate, ProjectUpdate, SourceCreate
 from app.services.errors import InvalidStateError, NotFoundError
 
 logger = structlog.get_logger()
@@ -38,6 +38,14 @@ class ContentService:
     async def create_project(self, data: ProjectCreate) -> Project:
         project = Project(**data.model_dump())
         self.session.add(project)
+        await self.session.commit()
+        await self.session.refresh(project)
+        return project
+
+    async def update_project(self, project_id: uuid.UUID, data: ProjectUpdate) -> Project:
+        project = await self._get_project(project_id)
+        for field, value in data.model_dump(exclude_unset=True).items():
+            setattr(project, field, value)
         await self.session.commit()
         await self.session.refresh(project)
         return project

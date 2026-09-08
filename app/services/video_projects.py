@@ -9,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.base import AIProvider
 from app.core.config import Settings
-from app.models import ContentDraft, ContentIdea, Project, SourceItem, VideoProject
+from app.models import (
+    ContentDraft,
+    ContentIdea,
+    Project,
+    SourceItem,
+    ThumbnailProject,
+    VideoProject,
+)
 from app.models.enums import SourceStatus, SourceType, SubtitlePreset, VideoProjectStatus
 from app.schemas.video import (
     EditClip,
@@ -272,6 +279,32 @@ class VideoProjectService:
         await self.session.refresh(video_project)
         return video_project
 
+    async def approved_package(self, video_project_id: uuid.UUID) -> dict[str, object]:
+        video_project = await self.get(video_project_id)
+        if video_project.status != VideoProjectStatus.APPROVED or not video_project.final_path:
+            raise InvalidStateError("Video must be approved before packaging")
+        draft = (
+            await self.session.get(ContentDraft, video_project.content_draft_id)
+            if video_project.content_draft_id
+            else None
+        )
+        thumbnail = (
+            await self.session.get(ThumbnailProject, video_project.selected_thumbnail_id)
+            if video_project.selected_thumbnail_id
+            else None
+        )
+        return {
+            "video_project_id": video_project.id,
+            "video_path": video_project.final_path,
+            "thumbnail_path": thumbnail.output_path if thumbnail else None,
+            "title": draft.title if draft else str(video_project.edit_plan.get("hook_text", "")),
+            "caption": draft.caption if draft else "",
+            "description": draft.description if draft else "",
+            "platform_adaptations": {},
+            "project_id": video_project.project_id,
+            "publishing_metadata": {"status": "ready", "phase": 4},
+        }
+
     async def request_cancel(self, video_project_id: uuid.UUID) -> VideoProject:
         video_project = await self.get(video_project_id)
         if video_project.status == VideoProjectStatus.RENDERING:
@@ -315,6 +348,7 @@ class VideoProjectService:
             "render_settings": video_project.render_settings,
             "transcript_overrides": video_project.transcript_overrides,
             "source_item_id": str(video_project.source_item_id),
+            "visual_plan": video_project.visual_plan,
         }
         encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
         return hashlib.sha256(encoded).hexdigest()
@@ -340,6 +374,8 @@ class VideoProjectService:
             "noise_reduction": self.settings.audio_noise_reduction_enabled,
             "remove_pauses": self.settings.pause_removal_enabled,
             "hook_overlay": self.settings.hook_overlay_enabled,
+            "safe_margin_top": self.settings.visual_safe_margin_top,
+            "safe_margin_bottom": self.settings.visual_safe_margin_bottom,
         }
 
     async def _renderable_source(self, source_id: uuid.UUID) -> SourceItem:

@@ -36,6 +36,56 @@ class BackendClient:
     async def get_source(self, source_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/sources/{source_id}")
 
+    async def list_projects(self) -> list[dict[str, Any]]:
+        return await self._request("GET", "/projects")
+
+    async def list_assets(self, project_id: str, query: str | None = None) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"project_id": project_id}
+        if query:
+            params["query"] = query
+        return await self._request("GET", "/assets", params=params)
+
+    async def suggest_visuals(self, video_project_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST", f"/video-projects/{video_project_id}/visual-suggestions", json={}
+        )
+
+    async def set_visual_plan(self, video_project_id: str, plan: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "PUT", f"/video-projects/{video_project_id}/visual-plan", json={"visual_plan": plan}
+        )
+
+    async def add_visual(self, video_project_id: str, insertion: dict[str, Any]) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/video-projects/{video_project_id}/visual-plan/insertions",
+            json={"insertion": insertion},
+        )
+
+    async def edit_visuals(self, video_project_id: str, instruction: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/video-projects/{video_project_id}/visual-plan/instruction",
+            json={"instruction": instruction},
+        )
+
+    async def generate_thumbnails(
+        self, video_project_id: str, headline: str | None = None
+    ) -> list[dict[str, Any]]:
+        return await self._request(
+            "POST",
+            f"/thumbnail-projects/video-projects/{video_project_id}",
+            json={"headline": headline},
+        )
+
+    async def select_thumbnail(self, thumbnail_id: str) -> dict[str, Any]:
+        return await self._request("POST", f"/thumbnail-projects/{thumbnail_id}/select")
+
+    async def download_thumbnail(self, thumbnail_id: str) -> bytes:
+        response = await self.client.get(f"/thumbnail-projects/{thumbnail_id}/file")
+        response.raise_for_status()
+        return response.content
+
     async def list_inbox(
         self,
         telegram_user_id: int,

@@ -57,6 +57,26 @@ class Settings(BaseSettings):
     celery_render_concurrency: int = Field(default=1, ge=1, le=16)
     video_font_path: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
+    vision_enabled: bool = False
+    vision_provider: str = "openai_compatible"
+    vision_base_url: str = ""
+    vision_api_key: str = ""
+    vision_model: str = ""
+    vision_timeout_seconds: float = Field(default=120, gt=0)
+    ocr_enabled: bool = True
+    ocr_language: str = "rus+eng"
+    max_image_pixels: int = Field(default=40_000_000, ge=1_000_000)
+    max_asset_size_mb: int = Field(default=200, ge=1)
+    max_asset_duration: float = Field(default=600, gt=0)
+    visual_min_insert_duration: float = Field(default=1.5, gt=0)
+    visual_max_insert_duration: float = Field(default=8.0, gt=0)
+    visual_min_gap_seconds: float = Field(default=2.0, ge=0)
+    visual_max_inserts_per_minute: int = Field(default=10, ge=1, le=60)
+    visual_safe_margin_top: int = Field(default=140, ge=0)
+    visual_safe_margin_bottom: int = Field(default=360, ge=0)
+    thumbnail_width: int = Field(default=1280, ge=320, le=4096)
+    thumbnail_height: int = Field(default=720, ge=180, le=4096)
+
     @field_validator("telegram_allowed_user_ids", mode="before")
     @classmethod
     def parse_user_ids(cls, value: object) -> object:
@@ -72,6 +92,8 @@ class Settings(BaseSettings):
             raise ValueError("VIDEO_MAX_DURATION must be greater than VIDEO_MIN_DURATION")
         if self.pause_keep_padding * 2 >= self.pause_min_duration:
             raise ValueError("PAUSE_KEEP_PADDING must preserve a removable pause interior")
+        if self.visual_max_insert_duration < self.visual_min_insert_duration:
+            raise ValueError("VISUAL_MAX_INSERT_DURATION must be >= VISUAL_MIN_INSERT_DURATION")
         return self
 
 

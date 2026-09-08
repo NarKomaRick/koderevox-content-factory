@@ -1,7 +1,9 @@
+import uuid
+
 from fastapi import APIRouter, status
 
 from app.api.dependencies import ServiceDep
-from app.schemas.api import ProjectCreate, ProjectRead
+from app.schemas.api import ProjectCreate, ProjectRead, ProjectUpdate
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -14,3 +16,8 @@ async def list_projects(service: ServiceDep) -> object:
 @router.post("", response_model=ProjectRead, status_code=status.HTTP_201_CREATED)
 async def create_project(data: ProjectCreate, service: ServiceDep) -> object:
     return await service.create_project(data)
+
+
+@router.patch("/{project_id}", response_model=ProjectRead)
+async def update_project(project_id: uuid.UUID, data: ProjectUpdate, service: ServiceDep) -> object:
+    return await service.update_project(project_id, data)

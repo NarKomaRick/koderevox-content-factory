@@ -189,6 +189,7 @@ class VideoProjectRead(BaseModel):
     concepts: list[dict[str, Any]]
     selected_concept: int | None
     edit_plan: dict[str, Any]
+    visual_plan: dict[str, Any]
     subtitle_style: dict[str, Any]
     render_settings: dict[str, Any]
     transcript_overrides: dict[str, str]
@@ -198,5 +199,18 @@ class VideoProjectRead(BaseModel):
     render_task_id: str | None
     render_fingerprint: str | None
     metrics: dict[str, Any]
+    selected_thumbnail_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+
+
+class ApprovedPackage(BaseModel):
+    video_project_id: uuid.UUID
+    video_path: str
+    thumbnail_path: str | None
+    title: str
+    caption: str
+    description: str
+    platform_adaptations: dict[str, Any] = Field(default_factory=dict)
+    project_id: uuid.UUID
+    publishing_metadata: dict[str, Any] = Field(default_factory=dict)

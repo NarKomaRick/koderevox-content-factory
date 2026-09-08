@@ -17,3 +17,15 @@ class ImageUnderstandingProvider(Protocol):
 
 class Publisher(Protocol):
     async def publish(self, content: ContentDraft) -> str: ...
+
+
+class ExternalAssetProvider(Protocol):
+    """Phase 5+ extension point. Phase 4 never searches stock automatically."""
+
+    async def search(self, query: str, *, license_types: list[str]) -> list[dict[str, str]]: ...
+
+
+class MusicProvider(Protocol):
+    """Extension point for explicitly selected, licensed local background audio."""
+
+    async def resolve(self, asset_id: str) -> Path: ...

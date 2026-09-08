@@ -10,15 +10,23 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.models import Project, SourceItem, VideoProject
+from app.models import Project, SourceItem, VideoProject, VisualAsset
 from app.models.enums import SubtitlePreset, VideoProjectStatus
 from app.schemas.video import EditPlan
+from app.schemas.visual import VisualPlan
 from app.services.edit_plan import EditPlanValidator
 from app.services.errors import InvalidStateError, NotFoundError
+from app.services.graphics import CodeCardRenderer
 from app.services.media import FFmpegMediaProcessor, MediaProcessingError
 from app.services.pause import FFmpegPauseDetector, TimeRange, clips_without_long_pauses
 from app.services.subtitles import SubtitleService
-from app.services.video_editor import FFmpegVideoEditor, RenderResult, VideoEditor
+from app.services.video_editor import (
+    FFmpegVideoEditor,
+    RenderResult,
+    VideoEditor,
+    VisualRenderAsset,
+)
+from app.services.visual_plans import VisualPlanService
 from app.storage.base import Storage
 
 logger = structlog.get_logger()
@@ -137,6 +145,44 @@ class VideoRenderService:
                 preset=preset.value,
             )
             output = workspace / "short.mp4"
+            visual_plan = VisualPlan.model_validate(video_project.visual_plan or {})
+            visual_service = VisualPlanService(self.session, self.settings)
+            visual_plan = await visual_service.validator.validate(
+                visual_plan,
+                video_project=video_project,
+                duration=output_duration,
+                allow_missing_optional=True,
+            )
+            visuals: list[VisualRenderAsset] = []
+            for insertion in visual_plan.insertions:
+                asset = await self.session.get(VisualAsset, insertion.asset_id)
+                if asset is None:
+                    if insertion.required:
+                        raise InvalidStateError("Required visual asset disappeared")
+                    continue
+                asset_path = self.storage.resolve(asset.processed_path or asset.original_path)
+                if not asset_path.is_file():
+                    if insertion.required:
+                        raise InvalidStateError("Required visual asset file is missing")
+                    continue
+                if insertion.layout.value == "code_card":
+                    code_path = workspace / f"code-{asset.id}.png"
+                    code = asset.extracted_text or asset.description or asset.title
+                    await CodeCardRenderer().render(
+                        code,
+                        code_path,
+                        font_path=self.settings.video_font_path,
+                    )
+                    asset_path = code_path
+                visuals.append(
+                    VisualRenderAsset(
+                        insertion=insertion,
+                        path=asset_path,
+                        is_video=asset.mime_type.startswith("video/")
+                        and insertion.layout.value != "code_card",
+                    )
+                )
+            visual_started = time.monotonic()
             result = await self.editor.render(
                 source=source_path,
                 destination=output,
@@ -144,6 +190,7 @@ class VideoRenderService:
                 plan=plan,
                 subtitle_file=subtitle_path,
                 settings=video_project.render_settings,
+                visuals=visuals,
             )
             if await self._cancel_requested(video_project_id):
                 raise RenderCancelledError("Render cancelled")
@@ -169,6 +216,8 @@ class VideoRenderService:
                 "output_duration": result.duration,
                 "output_size": result.size_bytes,
                 "number_of_clips": len(clips),
+                "visual_render_duration": round(time.monotonic() - visual_started, 3),
+                "visual_insertions": len(visuals),
                 "preview_frames": frames,
                 "source_width": media_metadata.get("width"),
                 "source_height": media_metadata.get("height"),
@@ -178,6 +227,7 @@ class VideoRenderService:
                     < int(video_project.render_settings["height"])
                 ),
             }
+            await visual_service.record_usage(video_project.id, visual_plan)
             await self.session.commit()
             await self.session.refresh(video_project)
             return video_project

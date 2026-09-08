@@ -15,6 +15,7 @@ from app.ai.prompts.system import build_system_prompt
 from app.models import Project, SourceItem, SourceNote
 from app.models.enums import ProcessingStage, SourceStatus, SourceType
 from app.schemas.ai import ContentIntelligence
+from app.services.assets import AssetService
 from app.services.document_processor import DocumentProcessor
 from app.services.errors import NotFoundError, PermanentProcessingError, TemporaryProcessingError
 from app.services.image_processor import ImageProcessor
@@ -55,6 +56,7 @@ class SourceProcessingService:
         image_processor: ImageProcessor,
         link_processor: LinkProcessor,
         telegram_media: TelegramMediaService | None,
+        asset_service: AssetService | None = None,
     ) -> None:
         self.session = session
         self.ai = ai_provider
@@ -65,6 +67,7 @@ class SourceProcessingService:
         self.images = image_processor
         self.links = link_processor
         self.telegram_media = telegram_media
+        self.assets = asset_service
 
     async def process(self, source_id: uuid.UUID) -> SourceItem:
         if not await self._claim(source_id):
@@ -83,6 +86,16 @@ class SourceProcessingService:
             source.processing_error = None
             source.completed_at = datetime.now(UTC)
             await self.session.commit()
+            if self.assets is not None:
+                try:
+                    await self.assets.ingest_source(source)
+                except Exception as exc:
+                    await self.session.rollback()
+                    await logger.awarning(
+                        "source_asset_indexing_failed",
+                        source_id=str(source.id),
+                        error_type=type(exc).__name__,
+                    )
             await self.session.refresh(source)
             await logger.ainfo("source_processing_completed", source_id=str(source.id))
             return source

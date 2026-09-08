@@ -68,7 +68,11 @@ class PreviewDeliveryService:
                 [
                     {"text": "✂️ Монтаж", "callback_data": f"video_edit:{project.id}"},
                     {"text": "📝 Текст", "callback_data": f"video_text:{project.id}"},
+                    {"text": "🎨 Визуалы", "callback_data": f"video_visuals:{project.id}"},
+                ],
+                [
                     {"text": "🎨 Стиль", "callback_data": f"video_style:{project.id}"},
+                    {"text": "🖼 Обложка", "callback_data": f"video_thumbnail:{project.id}"},
                 ],
                 [
                     {"text": "🔄 Пересобрать", "callback_data": f"video_rerender:{project.id}"},
