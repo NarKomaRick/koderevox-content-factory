@@ -36,9 +36,10 @@ class PreviewDeliveryService:
             await self.client.aclose()
 
     async def deliver(self, project: VideoProject, chat_id: int) -> str | None:
-        if not self.bot_token or not project.final_path:
+        media_path = project.final_path or project.preview_path
+        if not self.bot_token or not media_path:
             return None
-        final = self.storage.resolve(project.final_path)
+        final = self.storage.resolve(media_path)
         selected = final
         stored_preview = project.final_path
         if final.stat().st_size > self.maximum_size_bytes:

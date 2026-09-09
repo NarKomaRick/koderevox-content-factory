@@ -32,6 +32,10 @@ async def render_production_once(production_project_id: uuid.UUID, profile: str)
 @celery_app.task(name="content_factory.render_production", max_retries=1)
 def render_production_task(production_project_id: str, profile: str = "preview") -> str:
     project = run_async(render_production_once(uuid.UUID(production_project_id), profile))
+    try:
+        run_async(notify_render(project.id, True))
+    except Exception:
+        logger.exception("production_preview_notification_failed", production_project_id=production_project_id)
     return str(project.id)
 
 
