@@ -59,6 +59,7 @@ async def notify_render(video_project_id: uuid.UUID, success: bool) -> None:
             storage=LocalStorage(settings.media_root),
             maximum_size_bytes=settings.telegram_preview_max_size_mb * 1024 * 1024,
             editor=FFmpegVideoEditor(font_path=settings.video_font_path),
+            proxy_url=settings.telegram_proxy_url,
         )
         try:
             if success:

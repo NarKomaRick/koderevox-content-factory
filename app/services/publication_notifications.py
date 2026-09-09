@@ -18,12 +18,15 @@ class PublicationNotificationService:
         *,
         client: httpx.AsyncClient | None = None,
         base_url: str | None = None,
+        proxy_url: str | None = None,
     ) -> None:
         self.session = session
         self.configured = bool(bot_token)
         self._owns_client = client is None
         self.client = client or httpx.AsyncClient(
-            base_url=base_url or f"https://api.telegram.org/bot{bot_token}", timeout=20
+            base_url=base_url or f"https://api.telegram.org/bot{bot_token}",
+            timeout=20,
+            proxy=proxy_url,
         )
 
     async def aclose(self) -> None:

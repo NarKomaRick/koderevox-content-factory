@@ -21,6 +21,7 @@ class PreviewDeliveryService:
         storage: Storage,
         maximum_size_bytes: int,
         editor: FFmpegVideoEditor,
+        proxy_url: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.bot_token = bot_token
@@ -28,7 +29,7 @@ class PreviewDeliveryService:
         self.maximum_size_bytes = maximum_size_bytes
         self.editor = editor
         self._owns_client = client is None
-        self.client = client or httpx.AsyncClient(timeout=120)
+        self.client = client or httpx.AsyncClient(timeout=120, proxy=proxy_url)
 
     async def aclose(self) -> None:
         if self._owns_client:

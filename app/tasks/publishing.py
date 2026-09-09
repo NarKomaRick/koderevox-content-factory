@@ -38,7 +38,11 @@ async def publish_once(publication_id: uuid.UUID) -> Publication:
             )
             try:
                 publication = await service.execute(publication_id)
-                notifier = PublicationNotificationService(session, settings.telegram_bot_token)
+                notifier = PublicationNotificationService(
+                    session,
+                    settings.telegram_bot_token,
+                    proxy_url=settings.telegram_proxy_url,
+                )
                 try:
                     await notifier.notify_if_settled(publication.publish_package_id)
                 finally:
@@ -79,7 +83,11 @@ async def poll_once(publication_id: uuid.UUID) -> Publication:
             )
             try:
                 publication = await service.poll_status(publication_id)
-                notifier = PublicationNotificationService(session, settings.telegram_bot_token)
+                notifier = PublicationNotificationService(
+                    session,
+                    settings.telegram_bot_token,
+                    proxy_url=settings.telegram_proxy_url,
+                )
                 try:
                     await notifier.notify_if_settled(publication.publish_package_id)
                 finally:
