@@ -289,12 +289,7 @@ class ProductionRenderService:
             "[aout]",
             "-t",
             f"{timeline.duration:.3f}",
-            "-c:v",
-            "libx264",
-            "-crf",
-            str(profile.crf),
-            "-preset",
-            profile.preset,
+            *self._video_encoder_arguments(profile.crf, profile.preset),
             "-c:a",
             "aac",
             "-b:a",
@@ -307,6 +302,23 @@ class ProductionRenderService:
             "+faststart",
             str(output),
         ]
+
+    def _video_encoder_arguments(self, quality: int, preset: str) -> list[str]:
+        """Use NVENC when requested, while retaining a portable x264 fallback."""
+        if self.settings.video_encoder == "h264_nvenc":
+            return [
+                "-c:v",
+                "h264_nvenc",
+                "-preset",
+                "p4",
+                "-rc",
+                "vbr",
+                "-cq",
+                str(quality),
+                "-b:v",
+                "0",
+            ]
+        return ["-c:v", self.settings.video_encoder, "-crf", str(quality), "-preset", preset]
 
     @staticmethod
     async def _run(command: list[str]) -> None:

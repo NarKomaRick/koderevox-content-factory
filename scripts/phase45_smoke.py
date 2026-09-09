@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -71,9 +72,16 @@ async def main() -> None:
         tts = EspeakTTSProvider(default_language="ru", rate=125)
         tts_result = await tts.synthesize(SCRIPT, original)
         await FFmpegMediaProcessor().normalize_audio(original, processed)
-        stt = await FasterWhisperProvider("tiny", "cpu", "int8").transcribe(
+        settings_from_env = Settings()
+        stt_started = time.perf_counter()
+        stt = await FasterWhisperProvider(
+            settings_from_env.stt_model,
+            settings_from_env.stt_device,
+            settings_from_env.stt_compute_type,
+        ).transcribe(
             processed, vocabulary=["REST API", "1С"], language="ru"
         )
+        stt_elapsed_seconds = time.perf_counter() - stt_started
         duration = float(stt.duration or 0)
         if abs(duration - tts_result.duration) > 1.0:
             raise RuntimeError(f"TTS/STT duration mismatch: {tts_result.duration} vs {duration}")
@@ -304,6 +312,12 @@ async def main() -> None:
                 "voiceover_duration": duration,
                 "stt_language": stt.language,
                 "stt_words": sum(len(item.words) for item in stt.segments),
+                "stt": {
+                    "model": settings_from_env.stt_model,
+                    "device": settings_from_env.stt_device,
+                    "compute_type": settings_from_env.stt_compute_type,
+                    "elapsed_seconds": round(stt_elapsed_seconds, 3),
+                },
                 "alignment_score": voice.alignment_score,
                 "revisions": [
                     revision1.revision_number,

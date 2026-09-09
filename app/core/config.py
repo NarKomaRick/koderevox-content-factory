@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     video_fps: int = Field(default=30, ge=15, le=60)
     video_crf: int = Field(default=20, ge=0, le=51)
     video_preset: str = "medium"
+    video_encoder: str = "libx264"
     video_min_duration: float = Field(default=5.0, gt=0)
     video_max_duration: float = Field(default=75.0, gt=0)
     pause_removal_enabled: bool = True

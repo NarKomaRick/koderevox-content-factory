@@ -6,34 +6,35 @@ services:
       POSTGRES_USER: content_factory
       POSTGRES_PASSWORD: content_factory
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ../koderevox-content-factory-data/postgres/data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U content_factory -d content_factory"]
       interval: 5s
       timeout: 3s
       retries: 10
     restart: unless-stopped
-
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
     volumes:
-      - redis_data:/data
+      - ../koderevox-content-factory-data/redis:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 10
     restart: unless-stopped
-
   api:
     build: .
-    env_file: .env
+    env_file: ../koderevox-content-factory-data/config/.env
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     ports:
       - "8000:8000"
     volumes:
-      - media_data:/data/media
+      - ../koderevox-content-factory-data/media:/data/media
+      - ../koderevox-content-factory-data/renders:/data/renders
+      - ../koderevox-content-factory-data/logs:/data/logs
+      - ../koderevox-content-factory-data/capability-test-artifacts:/data/capability-test-artifacts
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -47,17 +48,17 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
-
+# End of Compose configuration.
   bot:
     build: .
-    env_file: .env
-    network_mode: host
+    profiles: ["telegram"]
+    env_file: ../koderevox-content-factory-data/config/.env
     environment:
-      BACKEND_URL: http://127.0.0.1:8000
-      TELEGRAM_PROXY_URL: http://127.0.0.1:2080
+      BACKEND_URL: http://api:8000
     command: ["python", "-m", "app.bot.main"]
     volumes:
-      - media_data:/data/media
+      - ../koderevox-content-factory-data/media:/data/media
+      - ../koderevox-content-factory-data/logs:/data/logs
     depends_on:
       api:
         condition: service_healthy
@@ -67,13 +68,24 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
-
   worker:
     build: .
-    env_file: .env
+    env_file: ../koderevox-content-factory-data/config/.env
     command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "-Q", "default,media"]
+    environment:
+      HF_HOME: /data/models/huggingface
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      STT_MODEL: small
+      STT_DEVICE: cuda
+      STT_COMPUTE_TYPE: float16
+      VIDEO_ENCODER: h264_nvenc
+    gpus: all
     volumes:
-      - media_data:/data/media
+      - ../koderevox-content-factory-data/media:/data/media
+      - ../koderevox-content-factory-data/renders:/data/renders
+      - ../koderevox-content-factory-data/logs:/data/logs
+      - ../koderevox-content-factory-data/capability-test-artifacts:/data/capability-test-artifacts
+      - ../koderevox-content-factory-data/models:/data/models
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -90,10 +102,16 @@ services:
 
   render-worker:
     build: .
-    env_file: .env
+    env_file: ../koderevox-content-factory-data/config/.env
     command: ["sh", "-c", "celery -A app.tasks.celery_app:celery_app worker --loglevel=INFO -Q render --concurrency=$${CELERY_RENDER_CONCURRENCY:-1} --hostname=render@%h"]
+    gpus: all
+    environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      VIDEO_ENCODER: h264_nvenc
     volumes:
-      - media_data:/data/media
+      - ../koderevox-content-factory-data/media:/data/media
+      - ../koderevox-content-factory-data/renders:/data/renders
+      - ../koderevox-content-factory-data/logs:/data/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,10 +126,12 @@ services:
 
   publish-worker:
     build: .
-    env_file: .env
+    env_file: ../koderevox-content-factory-data/config/.env
     command: ["sh", "-c", "celery -A app.tasks.celery_app:celery_app worker --loglevel=INFO -Q publish --concurrency=$${CELERY_PUBLISH_CONCURRENCY:-2} --hostname=publish@%h"]
     volumes:
-      - media_data:/data/media
+      - ../koderevox-content-factory-data/media:/data/media
+      - ../koderevox-content-factory-data/renders:/data/renders
+      - ../koderevox-content-factory-data/logs:/data/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -123,10 +143,9 @@ services:
       timeout: 10s
       retries: 3
     restart: unless-stopped
-
   publish-scheduler:
     build: .
-    env_file: .env
+    env_file: ../koderevox-content-factory-data/config/.env
     command: ["python", "-m", "app.tasks.scheduler"]
     depends_on:
       postgres:
@@ -139,8 +158,4 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
-
-volumes:
-  postgres_data:
-  redis_data:
-  media_data:
+# End of Compose configuration.

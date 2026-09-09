@@ -154,3 +154,61 @@ creates synthetic visual assets, performs voiceover-driven assembly, renders two
 The command requires the project dependencies, ffmpeg, ffprobe, espeak-ng, and a Whisper
 model available to faster-whisper. Runtime artifacts are created in a temporary directory and
 are not written to Git.
+
+## Windows 11 + WSL2 + NVIDIA RTX
+
+This deployment is intended for Docker Desktop in **Linux containers / WSL2 mode**. Do not
+switch Docker Desktop to Windows Containers. The checkout stays separate from all runtime data:
+
+| Location | Purpose |
+|---|---|
+| `D:\\Code\\For SSH\\koderevox-content-factory` | Git checkout only |
+| `D:\\Code\\For SSH\\koderevox-content-factory-data\\postgres\\data` | PostgreSQL data |
+| `D:\\Code\\For SSH\\koderevox-content-factory-data\\postgres\\backups` | portable pg_dump backups |
+| `D:\\Code\\For SSH\\koderevox-content-factory-data\\redis` | Redis AOF data |
+| `D:\\Code\\For SSH\\koderevox-content-factory-data\\media` | incoming and processed media |
+| `D:\\Code\\For SSH\\koderevox-content-factory-data\\renders` | render scratch space |
+| `D:\\Code\\For SSH\\koderevox-content-factory-data\\logs` | retained service logs |
+| `D:\\Code\\For SSH\\koderevox-content-factory-data\\models` | persistent Whisper/Hugging Face model cache |
+| `D:\\Code\\For SSH\\koderevox-content-factory-data\\capability-test-artifacts` | capability-test MP4s, report and debug frames |
+
+Install the current NVIDIA Windows driver, WSL2/Ubuntu, and Docker Desktop with the WSL2 backend.
+In Docker Desktop, enable the Ubuntu WSL integration. Verify GPU passthrough before building:
+
+```powershell
+docker run --rm --gpus all nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04 nvidia-smi
+```
+
+Copy `.env.example` to `D:\\Code\\For SSH\\koderevox-content-factory-data\\config\\.env` and fill only the
+credentials required for the services you intend to use. For the Windows GPU profile use
+`STT_MODEL=small`, `STT_DEVICE=cuda`, and `STT_COMPUTE_TYPE=float16`. The compose file uses an
+NVIDIA CUDA + cuDNN runtime and grants GPU access to the media and render workers.
+
+Start the non-Telegram services (the bot is deliberately isolated behind the `telegram` profile):
+
+```powershell
+docker compose up -d --build
+docker compose ps
+curl http://localhost:8000/health
+docker compose exec worker nvidia-smi
+```
+
+Run the deterministic test inside the GPU-enabled worker and retain its results outside Git:
+
+```powershell
+docker compose run --rm -e CAPABILITY_ARTIFACT_DIR=/data/capability-test-artifacts/latest worker python scripts/full_video_capability_test.py
+```
+
+The test must be configured with CUDA/STT `small` before it is considered a GPU result. Inspect
+the resulting `video_capability_report.json`, `final.mp4`, and `debug-*.png`; use `ffprobe` to
+verify 1080x1920 H.264 video, AAC audio and `yuv420p`.
+
+### Safe Telegram cutover and homelab rollback
+
+Keep the homelab bot polling/webhook active while Windows API, migrations, queues, GPU STT and the
+full capability test are being verified. Back up the homelab database with `pg_dump` before any
+restore, and copy only media and test artifacts after the backup has completed; never commit or
+print `.env` values. When every Windows check passes, stop polling/webhook **only on the homelab**,
+then start the Windows bot with `docker compose --profile telegram up -d bot` and send `/start`.
+If it fails, stop the Windows bot and re-enable the homelab bot; do not delete the homelab data or
+stack during rollback.
