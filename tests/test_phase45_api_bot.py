@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.api.routes import setup as setup_routes
 from app.bot.formatters import format_production
 from app.bot.handlers import setup_ai_connection
 from app.bot.keyboards import (
@@ -11,6 +12,7 @@ from app.bot.keyboards import (
     setup_keyboard,
 )
 from app.main import app
+from app.models.enums import UserRole
 
 
 def test_phase45_openapi_exposes_production_and_setup_workflows() -> None:
@@ -105,3 +107,14 @@ async def test_setup_secret_message_deletion_is_attempted_and_fsm_cleared() -> N
     assert message.deleted is True
     assert state.cleared is True
     assert all("top-secret-value" not in answer for answer in message.answers)
+
+
+@pytest.mark.asyncio
+async def test_setup_bootstraps_initial_owner(session, monkeypatch) -> None:
+    settings = SimpleNamespace(initial_owner_telegram_id=1044804334)
+    monkeypatch.setattr(setup_routes, "get_settings", lambda: settings)
+
+    user = await setup_routes._owner(session, 1044804334, private_chat=True)
+
+    assert user.telegram_id == 1044804334
+    assert user.role == UserRole.OWNER

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.session import get_session
 from app.models import User
+from app.models.enums import UserRole
 from app.schemas.production import AISetupRequest, RuntimeSettingUpdate, SecretUpdate
 from app.services.errors import NotFoundError
 from app.services.runtime_settings import (
@@ -24,6 +25,11 @@ limiter = SensitiveActionLimiter()
 
 async def _owner(session: AsyncSession, telegram_id: int, private_chat: bool) -> User:
     user = await session.scalar(select(User).where(User.telegram_id == telegram_id))
+    if user is None and get_settings().initial_owner_telegram_id == telegram_id:
+        user = User(telegram_id=telegram_id, username=None, role=UserRole.OWNER)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
     if user is None:
         raise NotFoundError("User not found")
     SettingsService.require_owner(user, private_chat=private_chat)
