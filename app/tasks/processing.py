@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import uuid
 from collections.abc import Coroutine
 from concurrent.futures import ThreadPoolExecutor
@@ -20,16 +21,21 @@ from app.services.voiceovers import VoiceoverService
 from app.tasks.celery_app import celery_app
 
 logger = structlog.get_logger()
+_async_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="celery-async")
+_loop_state = threading.local()
+
+
+def _run_on_worker_loop[ResultT](coroutine: Coroutine[Any, Any, ResultT]) -> ResultT:
+    loop = getattr(_loop_state, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        _loop_state.loop = loop
+    return loop.run_until_complete(coroutine)
 
 
 def run_async[ResultT](coroutine: Coroutine[Any, Any, ResultT]) -> ResultT:
-    """Run task async code both in a worker and Celery eager mode inside FastAPI."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coroutine)
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="celery-eager") as executor:
-        return executor.submit(asyncio.run, coroutine).result()
+    """Keep one event loop per worker process so asyncpg connections remain loop-local."""
+    return _async_executor.submit(_run_on_worker_loop, coroutine).result()
 
 
 async def process_source_once(source_id: uuid.UUID) -> SourceItem:
@@ -62,7 +68,9 @@ async def process_source_once(source_id: uuid.UUID) -> SourceItem:
                             session, settings
                         ).insert_locked(production.id, material.id, material.user_instruction)
                         if placement.status == "ambiguous" and revision is None:
-                            notifier = TelegramNotifier(settings.telegram_bot_token)
+                            notifier = TelegramNotifier(
+                                settings.telegram_bot_token, proxy_url=settings.telegram_proxy_url
+                            )
                             try:
                                 await notifier.placement_candidates(
                                     source.telegram_chat_id or 0,
@@ -97,7 +105,9 @@ async def notify_result(source_id: uuid.UUID, success: bool) -> None:
         if user is None:
             return
         chat_id = source.telegram_chat_id or user.telegram_id
-        notifier = TelegramNotifier(settings.telegram_bot_token)
+        notifier = TelegramNotifier(
+            settings.telegram_bot_token, proxy_url=settings.telegram_proxy_url
+        )
         try:
             if success:
                 await notifier.processed(source, chat_id)

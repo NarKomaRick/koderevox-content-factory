@@ -10,10 +10,16 @@ logger = structlog.get_logger()
 
 
 class TelegramNotifier:
-    def __init__(self, bot_token: str, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        bot_token: str,
+        client: httpx.AsyncClient | None = None,
+        *,
+        proxy_url: str = "",
+    ) -> None:
         self.bot_token = bot_token
         self._owns_client = client is None
-        self.client = client or httpx.AsyncClient(timeout=30)
+        self.client = client or httpx.AsyncClient(timeout=30, proxy=proxy_url or None)
 
     async def aclose(self) -> None:
         if self._owns_client:
