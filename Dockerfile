@@ -3,7 +3,7 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg curl fonts-dejavu-core libgomp1 \
+    && apt-get install -y --no-install-recommends ffmpeg espeak-ng curl fonts-dejavu-core libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

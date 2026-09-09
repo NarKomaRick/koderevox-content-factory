@@ -140,3 +140,17 @@ mypy app
 ## Лицензия
 
 См. файл [LICENSE](LICENSE).
+
+
+## Video capability smoke test
+
+The repository includes a deterministic end-to-end capability check. It creates a Russian
+technical script, synthesizes a local WAV with espeak-ng, runs faster-whisper and alignment,
+creates synthetic visual assets, performs voiceover-driven assembly, renders two previews and a
+1080x1920 final MP4, and prints a JSON summary.
+
+    python scripts/full_video_capability_test.py
+
+The command requires the project dependencies, ffmpeg, ffprobe, espeak-ng, and a Whisper
+model available to faster-whisper. Runtime artifacts are created in a temporary directory and
+are not written to Git.

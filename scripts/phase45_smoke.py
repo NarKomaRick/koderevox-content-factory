@@ -3,6 +3,8 @@
 import asyncio
 import hashlib
 import json
+import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -28,6 +30,7 @@ from app.services.production_rendering import ProductionRenderService, probe_jso
 from app.services.production_scripts import ScriptVersionService
 from app.services.production_timeline import AutoAssemblyService
 from app.services.stt import FasterWhisperProvider
+from app.services.tts import EspeakTTSProvider
 from app.services.voiceovers import VoiceoverService
 from app.storage.local import LocalStorage
 
@@ -65,12 +68,15 @@ async def main() -> None:
         render_temp = root / "render-temp"
         original = fixtures / "voice-original.wav"
         processed = fixtures / "voice-processed.wav"
-        await run_command("espeak-ng", "-v", "ru", "-s", "125", "-w", str(original), SCRIPT)
+        tts = EspeakTTSProvider(default_language="ru", rate=125)
+        tts_result = await tts.synthesize(SCRIPT, original)
         await FFmpegMediaProcessor().normalize_audio(original, processed)
         stt = await FasterWhisperProvider("tiny", "cpu", "int8").transcribe(
-            processed, vocabulary=["REST API", "1С"]
+            processed, vocabulary=["REST API", "1С"], language="ru"
         )
         duration = float(stt.duration or 0)
+        if abs(duration - tts_result.duration) > 1.0:
+            raise RuntimeError(f"TTS/STT duration mismatch: {tts_result.duration} vs {duration}")
         if not 25 <= duration <= 50:
             raise RuntimeError(f"Unexpected smoke voiceover duration: {duration}")
 
@@ -277,7 +283,7 @@ async def main() -> None:
             probe = await probe_json(final_path)
             streams = {item["codec_type"]: item for item in probe["streams"]}
             debug_hashes: list[str] = []
-            for index, section in enumerate(voice.alignment.get("sections", [])[:5]):
+            for index, section in enumerate(voice.alignment.get("sections", [])[:8]):
                 frame = root / f"debug-{index}.png"
                 await run_command(
                     "ffmpeg",
@@ -317,6 +323,29 @@ async def main() -> None:
                 "debug_frame_hashes": debug_hashes,
                 "temp_cleaned": not list(render_temp.glob("production-*")),
             }
+            artifact_dir = Path(os.environ.get("CAPABILITY_ARTIFACT_DIR", "data/test-runs/latest"))
+            artifact_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+            shutil.copy2(final_path, artifact_dir / "final.mp4")
+            shutil.copy2(
+                LocalStorage(str(media_root)).resolve(preview1_path), artifact_dir / "preview-1.mp4"
+            )
+            shutil.copy2(
+                LocalStorage(str(media_root)).resolve(preview2_path), artifact_dir / "preview-2.mp4"
+            )
+            for index in range(len(debug_hashes)):
+                source_frame = root / f"debug-{index}.png"
+                if source_frame.exists():
+                    shutil.copy2(source_frame, artifact_dir / f"debug-{index}.png")
+            report["artifact_dir"] = str(artifact_dir)
+            report["tts"] = {
+                "provider": tts_result.provider,
+                "language": tts_result.language,
+                "voice": tts_result.voice,
+                "duration": tts_result.duration,
+            }
+            (artifact_dir / "video_capability_report.json").write_text(
+                json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             print(json.dumps(report, ensure_ascii=False, indent=2))
         await engine.dispose()
 

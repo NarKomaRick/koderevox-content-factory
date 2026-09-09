@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     ai_max_retries: int = 2
     ai_max_tokens: int = Field(default=1536, ge=64, le=32768)
 
+    tts_provider: str = "espeak"
+    tts_language: str = "ru"
+    tts_voice: str = ""
+    tts_rate: int | None = None
+    tts_volume: int | None = None
+
     stt_provider: str = "faster_whisper"
     stt_model: str = "small"
     stt_device: str = "cpu"

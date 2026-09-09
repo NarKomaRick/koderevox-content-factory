@@ -29,12 +29,12 @@ class FasterWhisperProvider:
         return self.model
 
     async def transcribe(
-        self, media_path: Path, vocabulary: list[str] | None = None
+        self, media_path: Path, vocabulary: list[str] | None = None, language: str | None = None
     ) -> TranscriptionResult:
-        return await asyncio.to_thread(self._transcribe_sync, media_path, vocabulary)
+        return await asyncio.to_thread(self._transcribe_sync, media_path, vocabulary, language)
 
     def _transcribe_sync(
-        self, media_path: Path, vocabulary: list[str] | None = None
+        self, media_path: Path, vocabulary: list[str] | None = None, language: str | None = None
     ) -> TranscriptionResult:
         initial_prompt = ", ".join(vocabulary) if vocabulary else None
         model = self._get_model()
@@ -44,6 +44,7 @@ class FasterWhisperProvider:
                 vad_filter=True,
                 word_timestamps=True,
                 initial_prompt=initial_prompt,
+                language=language,
             )
         except TypeError:
             # Keeps compatibility with older faster-whisper-compatible adapters.
