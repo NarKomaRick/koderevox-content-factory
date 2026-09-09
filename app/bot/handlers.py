@@ -1603,7 +1603,16 @@ async def source_post(callback: CallbackQuery, backend: BackendClient) -> None:
     if not isinstance(callback.message, Message) or not callback.data:
         return
     await callback.message.answer("Готовлю Telegram-пост…")
-    draft = await backend.generate_source_post(callback.data.split(":", 1)[1])
+    try:
+        draft = await backend.generate_source_post(callback.data.split(":", 1)[1])
+    except httpx.TimeoutException:
+        await callback.message.answer(
+            "⚠️ Локальная AI-модель не ответила вовремя. Запрос остановлен — попробуйте ещё раз."
+        )
+        return
+    except httpx.HTTPError:
+        await callback.message.answer("⚠️ Не удалось сгенерировать пост. Попробуйте ещё раз.")
+        return
     text = f"{draft['title']}\n\n{draft['script']}\n\n{draft['call_to_action']}"
     await callback.message.answer(text)
 

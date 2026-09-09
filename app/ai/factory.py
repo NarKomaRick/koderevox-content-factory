@@ -14,5 +14,6 @@ def create_ai_provider(settings: Settings) -> AIProvider:
             model=settings.ai_model,
             timeout=settings.ai_timeout_seconds,
             max_retries=settings.ai_max_retries,
+            max_tokens=settings.ai_max_tokens,
         )
     raise ValueError(f"Unsupported AI_PROVIDER: {settings.ai_provider}")

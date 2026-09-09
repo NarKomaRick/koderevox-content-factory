@@ -253,7 +253,7 @@ class MockAIProvider:
                 "call_to_action": "Сохраните, если проектируете интеграцию с 1С.",
                 "estimated_duration": 45,
             }
-        elif response_model is RepurposeBundle:
+        elif response_model in {RepurposeBundle, RepurposedItem}:
             base = RepurposedItem(
                 title="Приложение, backend и 1С",
                 hook="Не связывайте приложение с 1С напрямую.",
@@ -276,7 +276,11 @@ class MockAIProvider:
                     "estimated_duration": None,
                 }
             )
-            data = RepurposeBundle(youtube_short=base, tiktok=base, telegram_post=post).model_dump()
+            data = (
+                RepurposeBundle(youtube_short=base, tiktok=base, telegram_post=post).model_dump()
+                if response_model is RepurposeBundle
+                else post.model_dump()
+            )
         else:
             raise TypeError(f"Unsupported mock response: {response_model.__name__}")
         return response_model.model_validate(data)

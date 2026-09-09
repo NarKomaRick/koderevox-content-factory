@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     ai_model: str = "local-model"
     ai_timeout_seconds: float = 120
     ai_max_retries: int = 2
+    ai_max_tokens: int = Field(default=1536, ge=64, le=32768)
 
     stt_provider: str = "faster_whisper"
     stt_model: str = "small"

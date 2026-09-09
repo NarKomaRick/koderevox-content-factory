@@ -23,12 +23,14 @@ class OpenAICompatibleProvider:
         model: str,
         timeout: float = 120,
         max_retries: int = 2,
+        max_tokens: int = 1536,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
         self.max_retries = max_retries
+        self.max_tokens = max_tokens
         self._owns_client = client is None
         self.client = client or httpx.AsyncClient(timeout=timeout)
 
@@ -66,6 +68,7 @@ class OpenAICompatibleProvider:
                     {"role": "user", "content": user_prompt + feedback},
                 ],
                 "temperature": 0.7,
+                "max_tokens": self.max_tokens,
                 "response_format": response_format,
             }
             try:

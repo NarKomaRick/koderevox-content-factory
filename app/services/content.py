@@ -11,10 +11,12 @@ from app.ai.prompts.idea_generator import build_idea_prompt
 from app.ai.prompts.repurpose import build_repurpose_prompt
 from app.ai.prompts.short_script import build_short_script_prompt
 from app.ai.prompts.system import build_system_prompt
+from app.ai.prompts.telegram_post import build_telegram_post_prompt
 from app.core.config import get_settings
 from app.models import ContentDraft, ContentIdea, Project, SourceItem, SourceNote, User
 from app.models.enums import (
     ContentFormat,
+    ContentPillar,
     DraftStatus,
     IdeaStatus,
     Platform,
@@ -276,18 +278,69 @@ class ContentService:
         return drafts
 
     async def generate_short_from_source(self, source_id: uuid.UUID) -> ContentDraft:
-        ideas = await self.generate_ideas(source_id)
-        selected = max(ideas, key=lambda idea: idea.score or 0)
-        draft = await self.generate_draft(selected.id)
         source = await self.get_source(source_id)
+        selected = await self._get_or_create_source_idea(source)
+        draft = await self.generate_draft(selected.id)
         source.processing_status = SourceStatus.USED
         await self.session.commit()
         return draft
 
     async def generate_telegram_post_from_source(self, source_id: uuid.UUID) -> ContentDraft:
-        short = await self.generate_short_from_source(source_id)
-        adaptations = await self.repurpose(short.id)
-        return next(item for item in adaptations if item.platform == Platform.TELEGRAM)
+        source = await self.get_source(source_id)
+        source_text = await self._build_source_context(source)
+        if not source_text:
+            raise InvalidStateError("SourceItem has no text or transcript")
+        idea = await self._get_or_create_source_idea(source)
+        project = await self._get_project(source.project_id)
+        result = await self.ai.generate_structured(
+            system_prompt=build_system_prompt(project),
+            user_prompt=build_telegram_post_prompt(idea, source_text),
+            response_model=RepurposedItem,
+        )
+        draft = self._adapted_draft(idea.id, Platform.TELEGRAM, ContentFormat.POST, result)
+        self.session.add(draft)
+        source.processing_status = SourceStatus.USED
+        await self.session.commit()
+        await self.session.refresh(draft)
+        return draft
+
+    async def _get_or_create_source_idea(self, source: SourceItem) -> ContentIdea:
+        existing = list(
+            await self.session.scalars(
+                select(ContentIdea).where(ContentIdea.source_item_id == source.id)
+            )
+        )
+        if existing:
+            return max(existing, key=lambda item: item.score or 0)
+
+        analysis = source.content_analysis or {}
+        angles = analysis.get("content_angles") or []
+        audiences = analysis.get("target_audiences") or []
+        pillars = analysis.get("content_pillars") or []
+        try:
+            pillar = ContentPillar(pillars[0]) if pillars else ContentPillar.EDUCATION
+        except ValueError:
+            pillar = ContentPillar.EDUCATION
+        title = source.topic or (source.original_text or "Новый материал")[:300]
+        summary = source.summary or source.original_text or source.transcript or title
+        idea = ContentIdea(
+            project_id=source.project_id,
+            source_item_id=source.id,
+            title=title,
+            description=summary,
+            angle=str(angles[0]) if angles else summary,
+            suggested_hook=title,
+            suggested_format=ContentFormat.SHORT_VIDEO,
+            estimated_duration=45,
+            target_audience=str(audiences[0]) if audiences else "техническая аудитория",
+            content_pillar=pillar,
+            score=(source.content_potential_score or 70) / 10,
+            status=IdeaStatus.SELECTED,
+        )
+        self.session.add(idea)
+        await self.session.commit()
+        await self.session.refresh(idea)
+        return idea
 
     def _adapted_draft(
         self,

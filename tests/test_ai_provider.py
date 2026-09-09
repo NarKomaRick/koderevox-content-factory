@@ -99,5 +99,6 @@ async def test_provider_sends_json_schema_without_exposing_key_in_body() -> None
     )
 
     assert captured["response_format"]["type"] == "json_schema"
+    assert captured["max_tokens"] == 1536
     assert "super-secret" not in json.dumps(captured)
     await client.aclose()

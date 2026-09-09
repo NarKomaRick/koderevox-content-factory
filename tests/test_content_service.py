@@ -62,3 +62,33 @@ async def test_regeneration_keeps_previous_version(session) -> None:
 
     assert first.id != second.id
     assert await session.scalar(select(func.count()).select_from(ContentDraft)) == 2
+
+
+async def test_direct_source_generators_reuse_intelligence_and_use_one_ai_call(session) -> None:
+    class CountingAI(MockAIProvider):
+        calls = 0
+
+        async def generate_structured(self, **kwargs):
+            self.calls += 1
+            return await super().generate_structured(**kwargs)
+
+    ai = CountingAI()
+    service = ContentService(session, ai)
+    source = await service.create_source(
+        SourceCreate(telegram_user_id=42, original_text="Интеграция приложения с 1С")
+    )
+    source.topic = "Безопасная интеграция с 1С"
+    source.summary = "Между приложением и 1С нужен стабильный API."
+    source.content_analysis = {
+        "content_angles": ["Архитектурный разбор"],
+        "target_audiences": ["Разработчики"],
+        "content_pillars": ["education"],
+    }
+    await session.commit()
+
+    post = await service.generate_telegram_post_from_source(source.id)
+
+    assert ai.calls == 1
+    assert post.platform == Platform.TELEGRAM
+    assert post.format.value == "post"
+    assert await session.scalar(select(func.count()).select_from(ContentIdea)) == 1
