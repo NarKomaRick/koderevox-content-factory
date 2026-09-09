@@ -10,6 +10,7 @@ def test_allowed_user_ids_accept_comma_separated_env(monkeypatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.telegram_allowed_user_ids == [123, 456]
+    assert settings.telegram_proxy_url == ""
 
 
 def test_phase3_render_settings_are_validated() -> None:

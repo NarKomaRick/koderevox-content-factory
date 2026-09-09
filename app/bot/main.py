@@ -1,6 +1,7 @@
 import asyncio
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.bot.access import AccessMiddleware
@@ -17,7 +18,8 @@ async def run() -> None:
         raise RuntimeError("TELEGRAM_BOT_TOKEN must be configured")
     if not settings.telegram_allowed_user_ids:
         raise RuntimeError("TELEGRAM_ALLOWED_USER_IDS must contain at least one user")
-    bot = Bot(token=settings.telegram_bot_token)
+    session = AiohttpSession(proxy=settings.telegram_proxy_url or None)
+    bot = Bot(token=settings.telegram_bot_token, session=session)
     backend = BackendClient(settings.backend_url)
     dispatcher = Dispatcher(storage=MemoryStorage())
     access = AccessMiddleware(set(settings.telegram_allowed_user_ids))

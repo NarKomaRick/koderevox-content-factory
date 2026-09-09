@@ -460,6 +460,7 @@ tests/                  # unit, integration и реальный FFmpeg smoke tes
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | `123:abc...` | секрет от BotFather |
 | `TELEGRAM_ALLOWED_USER_IDS` | `123456789` | кому разрешено пользоваться ботом |
+| `TELEGRAM_PROXY_URL` | `socks5://127.0.0.1:2080` | optional SOCKS/HTTP proxy for restricted networks |
 
 ### AI
 
@@ -918,6 +919,8 @@ docker compose logs --tail=200 bot api
 
 Обычно причина — неправильный `TELEGRAM_BOT_TOKEN`, отсутствующий user ID в whitelist или
 недоступный API.
+Если `api.telegram.org` недоступен напрямую, укажите SOCKS/HTTP proxy в
+`TELEGRAM_PROXY_URL`; зависимость `aiohttp-socks` уже входит в Docker image.
 
 ### Бот отвечает `Access denied`
 

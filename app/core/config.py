@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     celery_task_always_eager: bool = False
 
     telegram_bot_token: str = ""
+    telegram_proxy_url: str = ""
     telegram_allowed_user_ids: Annotated[list[int], NoDecode] = Field(default_factory=list)
     telegram_publish_bot_token: str = ""
     backend_url: str = "http://api:8000"
