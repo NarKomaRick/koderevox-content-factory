@@ -17,13 +17,14 @@ class TelegramMediaService:
         bot_token: str,
         storage: Storage,
         max_size_bytes: int,
+        proxy_url: str | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
         self.bot_token = bot_token
         self.storage = storage
         self.max_size_bytes = max_size_bytes
         self._owns_client = client is None
-        self.client = client or httpx.AsyncClient(timeout=120)
+        self.client = client or httpx.AsyncClient(timeout=120, proxy=proxy_url or None)
 
     async def aclose(self) -> None:
         if self._owns_client:

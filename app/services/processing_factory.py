@@ -30,6 +30,7 @@ def create_processing_service(session: AsyncSession, settings: Settings) -> Sour
             bot_token=settings.telegram_bot_token,
             storage=storage,
             max_size_bytes=settings.max_media_size_mb * 1024 * 1024,
+            proxy_url=settings.telegram_proxy_url,
         )
     if settings.stt_provider != "faster_whisper":
         raise ValueError(f"Unsupported STT_PROVIDER: {settings.stt_provider}")
