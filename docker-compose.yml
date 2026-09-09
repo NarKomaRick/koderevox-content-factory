@@ -51,6 +51,10 @@ services:
   bot:
     build: .
     env_file: .env
+    network_mode: host
+    environment:
+      BACKEND_URL: http://127.0.0.1:8000
+      TELEGRAM_PROXY_URL: http://127.0.0.1:2080
     command: ["python", "-m", "app.bot.main"]
     volumes:
       - media_data:/data/media

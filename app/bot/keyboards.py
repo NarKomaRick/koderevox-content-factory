@@ -1,3 +1,6 @@
+import base64
+import uuid
+
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -107,11 +110,14 @@ def develop_idea_keyboard(production_id: str) -> InlineKeyboardMarkup:
 
 
 def script_version_keyboard(production_id: str, script_id: str) -> InlineKeyboardMarkup:
+    token = base64.urlsafe_b64encode(
+        uuid.UUID(production_id).bytes + uuid.UUID(script_id).bytes
+    ).decode().rstrip("=")
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Утвердить", callback_data=f"prod_approve:{production_id}:{script_id}"
+                    text="✅ Утвердить", callback_data=f"prod_approve:{token}"
                 )
             ],
             [

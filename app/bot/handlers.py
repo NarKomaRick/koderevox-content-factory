@@ -1,3 +1,5 @@
+import base64
+import uuid
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -233,7 +235,10 @@ async def apply_production_script_edit(
 async def approve_production_script(callback: CallbackQuery, backend: BackendClient) -> None:
     await callback.answer("Сценарий утверждён")
     if callback.data and isinstance(callback.message, Message):
-        _, project_id, script_id = callback.data.split(":", 2)
+        token = callback.data.split(":", 1)[1]
+        decoded = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+        project_id = str(uuid.UUID(bytes=decoded[:16]))
+        script_id = str(uuid.UUID(bytes=decoded[16:32]))
         await backend.approve_production_script(project_id, script_id)
         await callback.message.answer(
             "✅ Сценарий утверждён. Дальше отправьте финальную озвучку через «Добавить материал»."
