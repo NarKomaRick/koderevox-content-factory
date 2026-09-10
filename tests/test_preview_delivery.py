@@ -60,6 +60,39 @@ async def test_telegram_preview_contains_video_and_human_controls(tmp_path) -> N
     await client.aclose()
 
 
+async def test_production_preview_uses_production_controls(tmp_path) -> None:
+    storage = LocalStorage(str(tmp_path))
+    preview_path = await storage.save("preview.mp4", b"production preview", "render")
+    project = VideoProject(
+        status=VideoProjectStatus.RENDERED,
+        target_duration=42,
+        preview_path=preview_path,
+        edit_plan={},
+        subtitle_style={"preset": "tech"},
+        metrics={"production_project_id": "production-1", "output_duration": 41.7},
+    )
+    captured: dict[str, str] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = request.content.decode(errors="replace")
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    delivery = PreviewDeliveryService(
+        bot_token="token",
+        storage=storage,
+        maximum_size_bytes=1024,
+        editor=FFmpegVideoEditor(),
+        client=client,
+    )
+    await delivery.deliver(project, 42)
+
+    assert "prod_preview:production-1" in captured["body"]
+    assert "video_edit:" not in captured["body"]
+    assert "generate-edit-plan" not in captured["body"]
+    await client.aclose()
+
+
 def test_preview_keyboard_payload_is_valid_json_shape() -> None:
     # Telegram callback data remains small and deterministic because it only stores a UUID/action.
     project = VideoProject(edit_plan={}, subtitle_style={}, metrics={})

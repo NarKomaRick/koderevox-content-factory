@@ -67,24 +67,53 @@ class PreviewDeliveryService:
             f"Hook: {plan.get('hook_text', '—')}\n"
             f"Style: {style}"
         )
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "✅ Одобрить", "callback_data": f"video_approve:{project.id}"}],
-                [
-                    {"text": "✂️ Монтаж", "callback_data": f"video_edit:{project.id}"},
-                    {"text": "📝 Текст", "callback_data": f"video_text:{project.id}"},
-                    {"text": "🎨 Визуалы", "callback_data": f"video_visuals:{project.id}"},
-                ],
-                [
-                    {"text": "🎨 Стиль", "callback_data": f"video_style:{project.id}"},
-                    {"text": "🖼 Обложка", "callback_data": f"video_thumbnail:{project.id}"},
-                ],
-                [
-                    {"text": "🔄 Пересобрать", "callback_data": f"video_rerender:{project.id}"},
-                    {"text": "🗑 Удалить", "callback_data": f"video_archive:{project.id}"},
-                ],
-            ]
-        }
+        production_id = project.metrics.get("production_project_id")
+        if production_id:
+            # Production/Director projects do not have the legacy VideoProject
+            # concepts/edit-plan contract. Do not expose callbacks that call the
+            # legacy clip-selector API and can only fail with a misleading 409.
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": "👁 Повторить preview",
+                            "callback_data": f"prod_preview:{production_id}",
+                        },
+                        {
+                            "text": "✅ Финализировать",
+                            "callback_data": f"prod_final:{production_id}",
+                        },
+                    ],
+                    [
+                        {
+                            "text": "📝 Правки",
+                            "callback_data": f"prod_replan:{production_id}",
+                        }
+                    ],
+                ]
+            }
+        else:
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "✅ Одобрить", "callback_data": f"video_approve:{project.id}"}],
+                    [
+                        {"text": "✂️ Монтаж", "callback_data": f"video_edit:{project.id}"},
+                        {"text": "📝 Текст", "callback_data": f"video_text:{project.id}"},
+                        {"text": "🎨 Визуалы", "callback_data": f"video_visuals:{project.id}"},
+                    ],
+                    [
+                        {"text": "🎨 Стиль", "callback_data": f"video_style:{project.id}"},
+                        {"text": "🖼 Обложка", "callback_data": f"video_thumbnail:{project.id}"},
+                    ],
+                    [
+                        {
+                            "text": "🔄 Пересобрать",
+                            "callback_data": f"video_rerender:{project.id}",
+                        },
+                        {"text": "🗑 Удалить", "callback_data": f"video_archive:{project.id}"},
+                    ],
+                ]
+            }
         response = await self.client.post(
             f"https://api.telegram.org/bot{self.bot_token}/sendVideo",
             data={
