@@ -1,7 +1,9 @@
 """Phase 7 orchestration layered on top of the Phase 6 executor."""
 
+import asyncio
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +84,7 @@ class AutonomousDirector:
         await self.session.commit()
         try:
             context = await self.runtime.context()
-            story = await self._story(context, run.instruction)
+            story = await self._story(run, context, run.instruction)
             run.story_analysis_json = story.model_dump(mode="json")
             await self.session.commit()
             await logger.ainfo("story_analysis_created", run_id=str(run.id), beats=len(story.beats))
@@ -90,7 +92,7 @@ class AutonomousDirector:
             await self._stage(run, "planning", "Планирую постановку")
             audio = await self._audio(context)
             run.audio_intelligence_json = audio
-            plan = await self._plan(context, story, audio, run.instruction)
+            plan = await self._plan(run, context, story, audio, run.instruction)
             run.director_plan_json = plan.model_dump(mode="json")
             await self.session.commit()
             await logger.ainfo("director_plan_created", run_id=str(run.id), beats=len(plan.beats))
@@ -178,19 +180,59 @@ class AutonomousDirector:
             )
             return run
 
-    async def _story(self, context: dict[str, Any], instruction: str) -> StoryAnalysis:
+    async def _story(
+        self, run: DirectorRun, context: dict[str, Any], instruction: str
+    ) -> StoryAnalysis:
         if self.provider is not None and self.settings.ai_provider != "mock":
-            return await StructuredStoryAnalyst(self.provider).analyze(context, instruction)
+            return await self._llm_call(
+                run, StructuredStoryAnalyst(self.provider).analyze, context, instruction
+            )
         return await DeterministicStoryAnalyst().analyze(context, instruction)
 
     async def _plan(
-        self, context: dict[str, Any], story: StoryAnalysis, audio: dict[str, Any], instruction: str
+        self,
+        run: DirectorRun,
+        context: dict[str, Any],
+        story: StoryAnalysis,
+        audio: dict[str, Any],
+        instruction: str,
     ) -> DirectorPlan:
         if self.provider is not None and self.settings.ai_provider != "mock":
-            return await StructuredDirectorPlanner(self.provider).plan(
-                context, story, audio, instruction
+            return await self._llm_call(
+                run,
+                StructuredDirectorPlanner(self.provider).plan,
+                context,
+                story,
+                audio,
+                instruction,
             )
         return await DeterministicDirectorPlanner().plan(context, story, audio, instruction)
+
+    async def _llm_call(self, run: DirectorRun, function: Any, *args: Any) -> Any:
+        heartbeat_task = asyncio.create_task(self._llm_heartbeat(run))
+        try:
+            return await function(*args)
+        finally:
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await heartbeat_task
+
+    async def _llm_heartbeat(self, run: DirectorRun) -> None:
+        reporter = self._progress(run)
+        try:
+            await reporter.heartbeat(message="🧠 Director выполняет LLM-запрос")
+            interval = max(5, self.settings.progress_update_interval_seconds)
+            while True:
+                await asyncio.sleep(interval)
+                await reporter.heartbeat(message="🧠 Director всё ещё работает над этим этапом")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await logger.awarning(
+                "director_progress_heartbeat_failed",
+                run_id=str(run.id),
+                error_type=type(exc).__name__,
+            )
 
     async def _audio(self, context: dict[str, Any]) -> dict[str, Any]:
         production = await self.session.get(ProductionProject, self.production_project_id)
@@ -336,8 +378,11 @@ class AutonomousDirector:
             timeline, profile, story=story, plan=plan, audio=audio, preview=preview
         )
         if self.provider is not None and self.settings.ai_provider != "mock":
-            director_review = await StructuredDirectorReviewer(self.provider).review(
-                review, {"story_analysis": story.model_dump(mode="json")}
+            director_review = await self._llm_call(
+                run,
+                StructuredDirectorReviewer(self.provider).review,
+                review,
+                {"story_analysis": story.model_dump(mode="json")},
             )
         else:
             director_review = await DeterministicDirectorReviewer().review(

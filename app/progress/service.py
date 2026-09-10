@@ -131,6 +131,15 @@ class ProgressReporter:
     async def waiting(self, stage: str, *, message: str, reason: str = "approval") -> JobProgress:
         return await self.report_stage(stage, state="waiting", message=message, force=True)
 
+    async def heartbeat(self, *, message: str | None = None) -> JobProgress:
+        """Persist liveness without inventing a new stage or progress value."""
+        row = await self._row()
+        row.updated_at = self.clock.now()
+        if message is not None:
+            row.message = message[:2000]
+        await self.session.commit()
+        return row
+
     async def fail(self, *, error_code: str, message: str, retry_count: int = 0) -> JobProgress:
         row = await self._row()
         row.state = "retrying" if retry_count else "failed"

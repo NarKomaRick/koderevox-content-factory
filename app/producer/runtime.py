@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,6 +55,8 @@ from app.producer.research import (
 )
 from app.progress import ProgressReporter
 from app.services.errors import InvalidStateError, NotFoundError
+
+logger = structlog.get_logger()
 
 
 class ProducerCancelled(Exception):
@@ -690,7 +695,31 @@ class ProducerRuntime:
             raise InvalidStateError("Producer LLM call limit reached")
         if type(self.model) is not FakeProducerModel:
             run.llm_call_count += 1
+            heartbeat_task = asyncio.create_task(self._llm_heartbeat(run))
+            try:
+                return await function(*args)
+            finally:
+                heartbeat_task.cancel()
+                with suppress(asyncio.CancelledError, Exception):
+                    await heartbeat_task
         return await function(*args)
+
+    async def _llm_heartbeat(self, run: ProducerRun) -> None:
+        reporter = self._progress(run)
+        try:
+            await reporter.heartbeat(message="🧠 LLM выполняет запрос")
+            interval = max(5, self.settings.progress_update_interval_seconds)
+            while True:
+                await asyncio.sleep(interval)
+                await reporter.heartbeat(message="🧠 LLM всё ещё работает над этим этапом")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await logger.awarning(
+                "producer_progress_heartbeat_failed",
+                run_id=str(run.id),
+                error_type=type(exc).__name__,
+            )
 
     @staticmethod
     def _platform_duration(platform: str) -> float:

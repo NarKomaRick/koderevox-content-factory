@@ -136,9 +136,14 @@ async def receive_producer_prompt(
         f"🎬 Producer run created: {run['id']}\n\n🔵 Запускаю исследование\n\n"
         "Осталось: оценка пока недоступна"
     )
-    await backend.attach_progress_message(
-        run["id"], chat_id=progress_message.chat.id, message_id=progress_message.message_id
-    )
+    try:
+        await backend.attach_progress_message(
+            run["id"], chat_id=progress_message.chat.id, message_id=progress_message.message_id
+        )
+    except httpx.HTTPError as exc:
+        # The watcher can still use the run id. Attachment is an optimization for
+        # server-side correlation, not a reason to lose the only user-visible flow.
+        await logger.awarning("telegram_progress_attach_failed", error_type=type(exc).__name__)
     asyncio.create_task(_watch_producer_progress(progress_message, backend, run["id"]))
 
 
@@ -148,10 +153,18 @@ async def _watch_producer_progress(
     last_text = ""
     last_stage = ""
     last_edit = 0.0
+    transient_errors = 0
     try:
         for _ in range(360):
             await asyncio.sleep(interval)
-            progress = await backend.producer_progress(run_id)
+            try:
+                progress = await backend.producer_progress(run_id)
+                transient_errors = 0
+            except httpx.HTTPError:
+                transient_errors += 1
+                if transient_errors >= 12:
+                    return
+                continue
             if not progress:
                 continue
             current = progress.get("current") or {}
@@ -170,7 +183,7 @@ async def _watch_producer_progress(
                 last_edit = now
             if state in {"completed", "failed", "cancelled"}:
                 return
-    except (asyncio.CancelledError, httpx.HTTPError):
+    except asyncio.CancelledError:
         return
 
 

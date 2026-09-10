@@ -1,6 +1,8 @@
 """Bounded Director agent loop with structured fallback for local OpenAI-compatible models."""
 
+import asyncio
 import uuid
+from contextlib import suppress
 from typing import Any, Protocol
 
 import structlog
@@ -230,12 +232,21 @@ class DirectorAgent:
                 context = await self.runtime.context()
                 tools = self.runtime.registry.openai_tools()
                 await logger.ainfo("director_llm_call", run_id=str(run.id), step=step + 1)
-                turn = await self.model.next_turn(
-                    context=context,
-                    tools=tools,
-                    instruction=run.instruction,
-                    history=run.history_json or [],
-                )
+                heartbeat_task = None
+                if type(self.model) is not FakeDirectorModel:
+                    heartbeat_task = asyncio.create_task(self._llm_heartbeat(progress))
+                try:
+                    turn = await self.model.next_turn(
+                        context=context,
+                        tools=tools,
+                        instruction=run.instruction,
+                        history=run.history_json or [],
+                    )
+                finally:
+                    if heartbeat_task is not None:
+                        heartbeat_task.cancel()
+                        with suppress(asyncio.CancelledError, Exception):
+                            await heartbeat_task
                 run.llm_call_count += 1
                 if not turn.tool_calls:
                     if turn.finalize:
@@ -281,6 +292,20 @@ class DirectorAgent:
                 error_type=type(exc).__name__,
             )
             return run
+
+    async def _llm_heartbeat(self, progress: ProgressReporter) -> None:
+        try:
+            await progress.heartbeat(message="🧠 Director выполняет LLM-запрос")
+            interval = max(5, self.settings.progress_update_interval_seconds)
+            while True:
+                await asyncio.sleep(interval)
+                await progress.heartbeat(message="🧠 Director всё ещё работает над этим шагом")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await logger.awarning(
+                "director_progress_heartbeat_failed", error_type=type(exc).__name__
+            )
 
     async def _execute_once(
         self, run: DirectorRun, call: DirectorToolCall, step: int

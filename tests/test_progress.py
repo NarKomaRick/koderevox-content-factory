@@ -44,6 +44,29 @@ async def test_progress_persists_real_stages_and_throttles(session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_progress_heartbeat_updates_liveness_without_fake_stage_progress(session) -> None:
+    clock = FakeClock(datetime(2026, 9, 14, 9, tzinfo=UTC))
+    reporter = ProgressReporter(session, "producer", "heartbeat-1", clock=clock)
+    await reporter.report_stage(
+        "researching", progress=0.4, message="Проверяю источники", force=True
+    )
+    clock.advance(seconds=20)
+    await reporter.heartbeat(message="🧠 LLM всё ещё работает над этим этапом")
+    row = await session.scalar(
+        select(JobProgress).where(
+            JobProgress.job_type == "producer", JobProgress.job_id == "heartbeat-1"
+        )
+    )
+    assert row is not None
+    assert row.stage == "researching"
+    assert row.stage_progress == pytest.approx(0.4)
+    assert row.message == "🧠 LLM всё ещё работает над этим этапом"
+    assert row.updated_at.replace(tzinfo=UTC) == clock.now()
+    events = (await session.scalars(select(ProgressEvent))).all()
+    assert len(events) == 1
+
+
+@pytest.mark.asyncio
 async def test_eta_uses_production_history_but_not_fake_history(session) -> None:
     clock = FakeClock(datetime(2026, 9, 14, 9, tzinfo=UTC))
     first = ProgressReporter(session, "producer", "real-1", clock=clock, source_kind="production")
