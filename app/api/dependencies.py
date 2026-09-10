@@ -10,6 +10,7 @@ from app.ai.factory import create_ai_provider
 from app.core.config import get_settings
 from app.db.session import get_session
 from app.director.runtime import DirectorRunService
+from app.producer.runtime import ProducerService
 from app.services.assets import AssetService
 from app.services.content import ContentService
 from app.services.credentials import EncryptedCredentialProvider, TokenManager
@@ -42,11 +43,13 @@ from app.tasks.queue import (
     AutonomousDirectorTaskQueue,
     CeleryAutonomousDirectorTaskQueue,
     CeleryDirectorTaskQueue,
+    CeleryProducerTaskQueue,
     CeleryProductionRenderTaskQueue,
     CeleryPublicationTaskQueue,
     CelerySourceTaskQueue,
     CeleryVideoRenderTaskQueue,
     DirectorTaskQueue,
+    ProducerTaskQueue,
     ProductionRenderTaskQueue,
     PublicationTaskQueue,
     SourceTaskQueue,
@@ -327,3 +330,18 @@ def get_autonomous_director_queue() -> AutonomousDirectorTaskQueue:
 AutonomousDirectorQueueDep = Annotated[
     AutonomousDirectorTaskQueue, Depends(get_autonomous_director_queue)
 ]
+
+
+def get_producer_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ProducerService:
+    return ProducerService(session, get_settings())
+
+
+@lru_cache
+def get_producer_queue() -> ProducerTaskQueue:
+    return CeleryProducerTaskQueue()
+
+
+ProducerDep = Annotated[ProducerService, Depends(get_producer_service)]
+ProducerQueueDep = Annotated[ProducerTaskQueue, Depends(get_producer_queue)]

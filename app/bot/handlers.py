@@ -99,8 +99,38 @@ class ProductionFlow(StatesGroup):
     waiting_for_replan = State()
 
 
+class ProducerFlow(StatesGroup):
+    waiting_for_prompt = State()
+
+
 class SetupFlow(StatesGroup):
     waiting_for_ai = State()
+
+
+@router.message(F.text == "✨ Создать ролик")
+async def new_producer_run(message: Message, state: FSMContext) -> None:
+    await state.set_state(ProducerFlow.waiting_for_prompt)
+    await message.answer("Опишите ролик одним сообщением — я исследую тему и подготовлю сценарий.")
+
+
+@router.message(ProducerFlow.waiting_for_prompt, F.text)
+async def receive_producer_prompt(
+    message: Message, state: FSMContext, backend: BackendClient
+) -> None:
+    if message.from_user is None:
+        return
+    try:
+        run = await backend.create_producer_run(
+            telegram_user_id=message.from_user.id,
+            prompt=message.text or "",
+            idempotency_key=f"telegram:{message.from_user.id}:{message.message_id}",
+        )
+    except httpx.HTTPError as exc:
+        await logger.aexception("telegram_producer_flow_failed", error_type=type(exc).__name__)
+        await message.answer("Не удалось создать Producer run. Проверьте, включён ли Producer.")
+        return
+    await state.clear()
+    await message.answer(f"✅ Producer run created: {run['id']}\n🔎 Исследую тему")
 
 
 @router.message(F.text == "🎬 Новый ролик")

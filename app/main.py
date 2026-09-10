@@ -9,6 +9,7 @@ from app.api.routes import (
     drafts,
     ideas,
     inbox,
+    producer,
     production,
     projects,
     publishing,
@@ -58,6 +59,7 @@ async def invalid_state_handler(_request: Request, exc: InvalidStateError) -> JS
 
 app.include_router(projects.router)
 app.include_router(production.router)
+app.include_router(producer.router)
 app.include_router(setup.router)
 app.include_router(sources.router)
 app.include_router(inbox.router)

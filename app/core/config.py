@@ -115,6 +115,22 @@ class Settings(BaseSettings):
     director_allow_web_assets: bool = False
     director_context_asset_limit: int = Field(default=100, ge=1, le=1000)
 
+    # Phase 8: opt-in, bounded Producer and offline-first research runtime.
+    producer_enabled: bool = False
+    producer_max_steps: int = Field(default=24, ge=1, le=200)
+    producer_max_llm_calls: int = Field(default=12, ge=0, le=100)
+    producer_max_search_queries: int = Field(default=4, ge=0, le=50)
+    producer_max_sources: int = Field(default=8, ge=0, le=100)
+    producer_max_fetches: int = Field(default=8, ge=0, le=100)
+    producer_max_script_iterations: int = Field(default=2, ge=0, le=10)
+    producer_max_angle_candidates: int = Field(default=3, ge=1, le=20)
+    producer_max_research_bytes: int = Field(
+        default=2 * 1024 * 1024, ge=1_024, le=100 * 1024 * 1024
+    )
+    producer_research_stale_days: int = Field(default=30, ge=1, le=3650)
+    producer_strict_factuality: bool = True
+    producer_research_extractor_version: str = "producer-html-v1"
+
     publish_scheduler_interval_seconds: int = Field(default=30, ge=1, le=3600)
     publish_max_attempts: int = Field(default=5, ge=1, le=20)
     celery_publish_concurrency: int = Field(default=2, ge=1, le=32)

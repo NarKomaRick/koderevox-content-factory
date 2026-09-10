@@ -11,6 +11,19 @@ class BackendClient:
     async def close(self) -> None:
         await self.client.aclose()
 
+    async def create_producer_run(
+        self, *, telegram_user_id: int, prompt: str, idempotency_key: str | None = None
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "telegram_user_id": telegram_user_id,
+            "prompt": prompt,
+            "platform": "youtube_shorts",
+            "research_mode": "fixtures",
+        }
+        if idempotency_key:
+            payload["idempotency_key"] = idempotency_key
+        return await self._request("POST", "/producer/runs", json=payload)
+
     async def create_text_source(
         self, *, telegram_user_id: int, telegram_username: str | None, text: str
     ) -> dict[str, Any]:
@@ -109,9 +122,7 @@ class BackendClient:
     async def assemble_production(self, production_id: str) -> dict[str, Any]:
         return await self._request("POST", f"/production-projects/{production_id}/assembly")
 
-    async def run_autonomous_director(
-        self, production_id: str, instruction: str
-    ) -> dict[str, Any]:
+    async def run_autonomous_director(self, production_id: str, instruction: str) -> dict[str, Any]:
         return await self._request(
             "POST",
             f"/production-projects/{production_id}/director/autonomous",

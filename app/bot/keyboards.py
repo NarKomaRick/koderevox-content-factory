@@ -12,6 +12,7 @@ from aiogram.types import (
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
+            [KeyboardButton(text="✨ Создать ролик")],
             [KeyboardButton(text="🎬 Новый ролик"), KeyboardButton(text="📂 Мои ролики")],
             [KeyboardButton(text="➕ Новая идея"), KeyboardButton(text="📥 Контент-инбокс")],
             [KeyboardButton(text="📎 Добавить материалы"), KeyboardButton(text="🗂 Материалы")],

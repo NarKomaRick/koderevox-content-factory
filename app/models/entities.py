@@ -622,6 +622,131 @@ class DirectorPreference(Base):
     )
 
 
+class ProducerRun(Base):
+    """Durable resumable state for one autonomous content run."""
+
+    __tablename__ = "producer_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    raw_prompt: Mapped[str] = mapped_column(Text)
+    platform: Mapped[str] = mapped_column(String(64), default="youtube_shorts")
+    target_duration: Mapped[float | None] = mapped_column(Float)
+    tone: Mapped[str | None] = mapped_column(String(255))
+    research_mode: Mapped[str] = mapped_column(String(32), default="fixtures")
+    approval_mode: Mapped[bool] = mapped_column(Boolean, default=False)
+    approval_state: Mapped[str] = mapped_column(String(32), default="not_required")
+    status: Mapped[str] = mapped_column(String(32), default="created", index=True)
+    current_stage: Mapped[str] = mapped_column(String(32), default="created")
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
+    step_count: Mapped[int] = mapped_column(Integer, default=0)
+    llm_call_count: Mapped[int] = mapped_column(Integer, default=0)
+    search_query_count: Mapped[int] = mapped_column(Integer, default=0)
+    source_count: Mapped[int] = mapped_column(Integer, default=0)
+    fetch_count: Mapped[int] = mapped_column(Integer, default=0)
+    script_iterations: Mapped[int] = mapped_column(Integer, default=0)
+    artifacts: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    errors: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, default=list)
+    error: Mapped[str | None] = mapped_column(Text)
+    production_project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="SET NULL"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    project: Mapped[Project] = relationship()
+    user: Mapped[User] = relationship()
+    production_project: Mapped[ProductionProject | None] = relationship()
+
+
+class ResearchSource(Base):
+    __tablename__ = "research_sources"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("producer_runs.id", ondelete="SET NULL"), index=True
+    )
+    canonical_url: Mapped[str] = mapped_column(String(2048), unique=True, index=True)
+    final_url: Mapped[str | None] = mapped_column(String(2048))
+    title: Mapped[str] = mapped_column(String(1000), default="")
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    extractor_version: Mapped[str] = mapped_column(String(64), default="producer-html-v1")
+    content_type: Mapped[str] = mapped_column(String(255), default="text/html")
+    extracted_text: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    time_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    stale: Mapped[bool] = mapped_column(Boolean, default=False)
+    prompt_injection_detected: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ResearchFact(Base):
+    __tablename__ = "research_facts"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("producer_runs.id", ondelete="SET NULL"), index=True
+    )
+    production_project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="SET NULL"), index=True
+    )
+    claim: Mapped[str] = mapped_column(Text)
+    normalized_claim: Mapped[str] = mapped_column(Text, index=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.8)
+    status: Mapped[str] = mapped_column(String(32), default="verified", index=True)
+    critical: Mapped[bool] = mapped_column(Boolean, default=False)
+    time_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    stale: Mapped[bool] = mapped_column(Boolean, default=False)
+    conflict_group: Mapped[str | None] = mapped_column(String(128), index=True)
+    provenance_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ResearchFactSource(Base):
+    __tablename__ = "research_fact_sources"
+    __table_args__ = (UniqueConstraint("fact_id", "source_id", name="uq_research_fact_source"),)
+
+    fact_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_facts.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("research_sources.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
+class ContentChannelProfile(Base):
+    __tablename__ = "content_channel_profiles"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "platform", name="uq_content_channel_profile_project_platform"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    platform: Mapped[str] = mapped_column(String(64))
+    audience: Mapped[str] = mapped_column(Text, default="")
+    tone: Mapped[str] = mapped_column(String(255), default="")
+    content_pillars: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    preferred_duration: Mapped[float | None] = mapped_column(Float)
+    cta_strategy: Mapped[str] = mapped_column(Text, default="")
+    taboo_topics: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    brand_voice: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+
 class RuntimeSetting(Base):
     __tablename__ = "runtime_settings"
     __table_args__ = (
