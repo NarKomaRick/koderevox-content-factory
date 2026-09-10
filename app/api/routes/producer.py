@@ -9,6 +9,7 @@ from app.api.dependencies import ProducerDep, ProducerQueueDep
 from app.core.config import get_settings
 from app.producer.domain import ProducerReport, ProducerStatus
 from app.progress import PipelineProgressService
+from app.progress.service import JobProgressRead
 from app.schemas.producer import ProducerRunCreate, ProducerRunRead
 from app.services.errors import InvalidStateError
 
@@ -67,10 +68,10 @@ async def get_progress(run_id: uuid.UUID, producer: ProducerDep) -> object:
     return await PipelineProgressService(producer.session).for_job("producer", run_id)
 
 
-@router.post("/runs/{run_id}/progress-message")
+@router.post("/runs/{run_id}/progress-message", response_model=JobProgressRead | None)
 async def attach_progress_message(
     run_id: uuid.UUID, data: ProgressMessageAttach, producer: ProducerDep
 ) -> object:
-    return await PipelineProgressService(producer.session).attach_telegram_message(
-        "producer", run_id, data.chat_id, data.message_id
-    )
+    progress = PipelineProgressService(producer.session)
+    await progress.attach_telegram_message("producer", run_id, data.chat_id, data.message_id)
+    return await progress.for_job("producer", run_id)

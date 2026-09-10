@@ -71,7 +71,7 @@ services:
   worker:
     build: .
     env_file: ../koderevox-content-factory-data/config/.env
-    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "-Q", "default,media"]
+    command: ["celery", "-A", "app.tasks.celery_app:celery_app", "worker", "--loglevel=INFO", "-Q", "default,media,producer,director,operations"]
     environment:
       HF_HOME: /data/models/huggingface
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
