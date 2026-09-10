@@ -29,7 +29,10 @@ class PreviewDeliveryService:
         self.maximum_size_bytes = maximum_size_bytes
         self.editor = editor
         self._owns_client = client is None
-        self.client = client or httpx.AsyncClient(timeout=120, proxy=proxy_url)
+        # An empty env value means direct Telegram access, not an invalid proxy URL.
+        self.client = client or httpx.AsyncClient(
+            timeout=120, proxy=proxy_url.strip() or None if proxy_url else None
+        )
 
     async def aclose(self) -> None:
         if self._owns_client:

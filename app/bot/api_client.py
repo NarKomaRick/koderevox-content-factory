@@ -24,8 +24,10 @@ class BackendClient:
             payload["idempotency_key"] = idempotency_key
         return await self._request("POST", "/producer/runs", json=payload)
 
-    async def operations_status(self) -> dict[str, Any]:
-        return await self._request("GET", "/operations/status")
+    async def operations_status(self, *, telegram_user_id: int | None = None) -> dict[str, Any]:
+        return await self._request(
+            "GET", "/operations/status", headers=self._actor_headers(telegram_user_id)
+        )
 
     async def producer_progress(self, run_id: str) -> dict[str, Any] | None:
         return await self._request("GET", f"/producer/runs/{run_id}/progress")
@@ -39,11 +41,28 @@ class BackendClient:
             json={"chat_id": chat_id, "message_id": message_id},
         )
 
-    async def operations_calendar(self) -> list[dict[str, Any]]:
-        return await self._request("GET", "/operations/calendar")
+    async def operations_calendar(
+        self, *, telegram_user_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        return await self._request(
+            "GET", "/operations/calendar", headers=self._actor_headers(telegram_user_id)
+        )
 
-    async def operations_approvals(self) -> list[dict[str, Any]]:
-        return await self._request("GET", "/operations/approvals", params={"status": "pending"})
+    async def operations_approvals(
+        self, *, telegram_user_id: int | None = None
+    ) -> list[dict[str, Any]]:
+        return await self._request(
+            "GET",
+            "/operations/approvals",
+            params={"status": "pending"},
+            headers=self._actor_headers(telegram_user_id),
+        )
+
+    @staticmethod
+    def _actor_headers(telegram_user_id: int | None) -> dict[str, str]:
+        if telegram_user_id is None:
+            return {}
+        return {"X-Actor-Telegram-Id": str(telegram_user_id)}
 
     async def create_text_source(
         self, *, telegram_user_id: int, telegram_username: str | None, text: str

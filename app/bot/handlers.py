@@ -220,7 +220,8 @@ def _format_elapsed(started_at: object) -> str | None:
 
 @router.message(F.text == "📊 Статус студии")
 async def operations_status(message: Message, backend: BackendClient) -> None:
-    status = await backend.operations_status()
+    assert message.from_user is not None
+    status = await backend.operations_status(telegram_user_id=message.from_user.id)
     await message.answer(
         "📊 Статус студии\n"
         f"🟢 готово к публикации: {status.get('ready_to_publish', 0)}\n"
@@ -233,7 +234,8 @@ async def operations_status(message: Message, backend: BackendClient) -> None:
 
 @router.message(F.text == "🗓 Контент-план")
 async def operations_calendar(message: Message, backend: BackendClient) -> None:
-    items = await backend.operations_calendar()
+    assert message.from_user is not None
+    items = await backend.operations_calendar(telegram_user_id=message.from_user.id)
     if not items:
         await message.answer("🗓 В ближайшем контент-плане пока нет роликов.")
         return
@@ -246,7 +248,8 @@ async def operations_calendar(message: Message, backend: BackendClient) -> None:
 
 @router.message(F.text == "✅ На проверку")
 async def operations_approvals(message: Message, backend: BackendClient) -> None:
-    items = await backend.operations_approvals()
+    assert message.from_user is not None
+    items = await backend.operations_approvals(telegram_user_id=message.from_user.id)
     await message.answer(f"✅ На проверке сейчас: {len(items)}")
 
 

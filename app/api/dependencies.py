@@ -4,6 +4,7 @@ from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.base import AIProvider
@@ -11,6 +12,7 @@ from app.ai.factory import create_ai_provider
 from app.core.config import get_settings
 from app.db.session import get_session
 from app.director.runtime import DirectorRunService
+from app.models import User
 from app.operations.service import OperationsService
 from app.producer.runtime import ProducerService
 from app.services.assets import AssetService
@@ -87,17 +89,26 @@ def get_content_service(
 ServiceDep = Annotated[ContentService, Depends(get_content_service)]
 
 
-def get_operations_service(
+async def get_operations_service(
     session: Annotated[AsyncSession, Depends(get_session)],
     actor_header: Annotated[str | None, Header(alias="X-Actor-User-Id")] = None,
+    actor_telegram_header: Annotated[int | None, Header(alias="X-Actor-Telegram-Id")] = None,
 ) -> OperationsService:
     settings = get_settings()
-    if settings.app_env == "production" and not actor_header:
+    if settings.app_env == "production" and not actor_header and actor_telegram_header is None:
         raise HTTPException(status_code=401, detail="X-Actor-User-Id is required")
-    try:
-        actor_user_id = uuid.UUID(actor_header) if actor_header else None
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid X-Actor-User-Id") from exc
+    if actor_header:
+        try:
+            actor_user_id = uuid.UUID(actor_header)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid X-Actor-User-Id") from exc
+    elif actor_telegram_header is not None:
+        actor = await session.scalar(select(User).where(User.telegram_id == actor_telegram_header))
+        if actor is None:
+            raise HTTPException(status_code=403, detail="Actor user not found")
+        actor_user_id = actor.id
+    else:
+        actor_user_id = None
     return OperationsService(session, settings, actor_user_id=actor_user_id)
 
 
