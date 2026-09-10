@@ -7,10 +7,11 @@ from app.core.config import Settings
 from app.models import ApprovalRequest, Project, User
 from app.operations.approvals import ApprovalManager
 from app.operations.clock import FakeClock
-from app.operations.domain import ApprovalPolicy, ContentItemStatus
+from app.operations.domain import ApprovalPolicy, ContentItemStatus, ensure_content_item_transition
 from app.operations.orchestrator import StudioOrchestrator
 from app.operations.schemas import ApprovalDecision, ContentItemCreate, PillarInput, StrategyCreate
 from app.operations.service import OperationsService
+from app.services.errors import InvalidStateError
 
 
 @pytest.mark.asyncio
@@ -88,3 +89,10 @@ async def test_operations_approval_retry_and_cancel_are_stateful(session) -> Non
     assert (await service.get_item(item.id)).status == ContentItemStatus.DIRECTOR_QUEUED
     await service.cancel_item(item.id)
     assert (await service.get_item(item.id)).status == ContentItemStatus.CANCELLED
+
+
+def test_content_item_transition_map_rejects_cross_stage_jump() -> None:
+    with pytest.raises(InvalidStateError, match="INVALID_TRANSITION"):
+        ensure_content_item_transition(
+            ContentItemStatus.PLANNED, ContentItemStatus.PUBLISHED
+        )

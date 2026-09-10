@@ -17,6 +17,7 @@ from app.director.schemas import (
     ModelCapabilityProfile,
 )
 from app.models import DirectorAction, DirectorRun
+from app.progress import ProgressReporter
 from app.services.errors import InvalidStateError
 
 logger = structlog.get_logger()
@@ -204,6 +205,23 @@ class DirectorAgent:
         run.status = "running"
         run.active = True
         await self.runtime.session.commit()
+        progress = ProgressReporter(
+            self.runtime.session,
+            "director",
+            run.id,
+            source_kind="fake" if self.settings.ai_provider == "mock" else "production",
+            director_run_id=run.id,
+            production_project_id=run.production_project_id,
+            min_delta=self.settings.progress_min_percent_delta,
+            min_interval_seconds=self.settings.progress_update_interval_seconds,
+        )
+        await progress.report_stage(
+            "director",
+            step_index=0,
+            step_total=self.settings.director_max_steps,
+            message="Director начинает работу",
+            force=True,
+        )
         try:
             for step in range(self.settings.director_max_steps):
                 run.step_count = step + 1
@@ -242,6 +260,7 @@ class DirectorAgent:
                         run.active = False
                         run.best_revision_id = run.current_revision_id
                         await self.runtime.session.commit()
+                        await progress.complete(message="Director завершил работу")
                         return run
                 run.history_json = [
                     *(run.history_json or []),
@@ -254,6 +273,7 @@ class DirectorAgent:
             run.active = False
             run.error = str(exc)[:2000]
             await self.runtime.session.commit()
+            await progress.fail(error_code=type(exc).__name__, message=str(exc)[:2000])
             await logger.aerror(
                 "director_completed",
                 run_id=str(run.id),

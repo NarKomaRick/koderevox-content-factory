@@ -9,7 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models import ApprovalRequest, ContentItem
 from app.operations.audit import audit
-from app.operations.domain import ApprovalCheckpoint, ApprovalStatus, ContentItemStatus
+from app.operations.domain import (
+    ApprovalCheckpoint,
+    ApprovalStatus,
+    ContentItemStatus,
+    ensure_content_item_transition,
+)
 from app.operations.policies import OperationsPolicy
 from app.operations.schemas import ApprovalDecision
 from app.services.errors import NotFoundError
@@ -36,11 +41,13 @@ class ApprovalManager:
         approval.requested_at = datetime.now(UTC)
         self.session.add(approval)
         item.approval_state = ApprovalStatus.PENDING
-        item.status = (
+        target_status = (
             ContentItemStatus.AWAITING_SCRIPT_APPROVAL
             if checkpoint == ApprovalCheckpoint.SCRIPT
             else ContentItemStatus.AWAITING_PREVIEW_APPROVAL
         )
+        ensure_content_item_transition(item.status, target_status)
+        item.status = target_status
         await audit(
             self.session,
             "approval_requested",
@@ -69,14 +76,17 @@ class ApprovalManager:
         approval.comment = data.comment
         if approved:
             item.approval_state = ApprovalStatus.APPROVED
-            item.status = (
+            target_status = (
                 ContentItemStatus.DIRECTOR_QUEUED
                 if approval.checkpoint == ApprovalCheckpoint.SCRIPT
                 else ContentItemStatus.READY_TO_PUBLISH
             )
+            ensure_content_item_transition(item.status, target_status)
+            item.status = target_status
             event = "approval_approved"
         else:
             item.approval_state = ApprovalStatus.REJECTED
+            ensure_content_item_transition(item.status, ContentItemStatus.QUEUED)
             item.status = ContentItemStatus.QUEUED
             item.correction_instruction = data.comment
             item.operator_notes = (

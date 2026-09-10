@@ -50,6 +50,7 @@ from app.producer.research import (
     canonical_url,
     contains_prompt_injection,
 )
+from app.progress import ProgressReporter
 from app.services.errors import InvalidStateError, NotFoundError
 
 
@@ -133,6 +134,17 @@ class ProducerRuntime:
         self.model = model or FakeProducerModel()
         self.research_provider = research_provider or FakeResearchProvider()
 
+    def _progress(self, run: ProducerRun) -> ProgressReporter:
+        return ProgressReporter(
+            self.session,
+            "producer",
+            run.id,
+            source_kind="fake" if type(self.model) is FakeProducerModel else "production",
+            producer_run_id=run.id,
+            min_delta=self.settings.progress_min_percent_delta,
+            min_interval_seconds=self.settings.progress_update_interval_seconds,
+        )
+
     async def run(self, run_id: uuid.UUID) -> ProducerRun:
         run = await self.session.get(ProducerRun, run_id)
         if run is None:
@@ -150,6 +162,9 @@ class ProducerRuntime:
             await self._stage_script(run)
             await self._stage_review(run)
             if run.approval_mode and run.approval_state == ApprovalState.PENDING:
+                await self._progress(run).waiting(
+                    "waiting_approval", message="Жду подтверждения сценария"
+                )
                 return run
             await self._stage_assets(run)
             await self._stage_production(run)
@@ -157,6 +172,7 @@ class ProducerRuntime:
             run.current_stage = ProducerStatus.COMPLETED
             run.completed_at = datetime.now(UTC)
             await self.session.commit()
+            await self._progress(run).complete()
             return run
         except ProducerCancelled:
             await self.session.rollback()
@@ -173,6 +189,9 @@ class ProducerRuntime:
                 {"stage": failed.current_stage, "error": str(exc)[:2000]},
             ]
             await self.session.commit()
+            await self._progress(failed).fail(
+                error_code=type(exc).__name__, message=str(exc)[:2000]
+            )
             return failed
 
     async def approve(self, run_id: uuid.UUID) -> ProducerRun:
@@ -183,6 +202,11 @@ class ProducerRuntime:
         run.status = ProducerStatus.PLANNING_ASSETS
         run.current_stage = ProducerStatus.PLANNING_ASSETS
         await self.session.commit()
+        await self._progress(run).report_stage(
+            ProducerStatus.PLANNING_ASSETS.value,
+            message="Продолжаю после подтверждения сценария",
+            force=True,
+        )
         return run
 
     async def cancel(self, run_id: uuid.UUID) -> ProducerRun:
@@ -197,6 +221,7 @@ class ProducerRuntime:
         run.current_stage = ProducerStatus.CANCELLED
         run.cancelled_at = datetime.now(UTC)
         await self.session.commit()
+        await self._progress(run).fail(error_code="CANCELLED", message="Producer run cancelled")
         return run
 
     async def resume(self, run_id: uuid.UUID) -> ProducerRun:
@@ -644,6 +669,13 @@ class ProducerRuntime:
         run.status = status
         run.current_stage = status
         await self.session.flush()
+        await self._progress(run).report_stage(
+            status.value,
+            step_index=run.step_count,
+            step_total=self.settings.producer_max_steps,
+            message=f"{status.value.replace('_', ' ')}",
+            force=True,
+        )
 
     async def _commit(self, run: ProducerRun, status: ProducerStatus) -> None:
         run.status = status

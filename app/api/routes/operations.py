@@ -23,6 +23,7 @@ from app.operations.schemas import (
     StrategyRead,
 )
 from app.operations.service import OperationsService
+from app.progress import PipelineProgressService
 
 router = APIRouter(prefix="/operations", tags=["operations"])
 ServiceDep = Annotated[OperationsService, Depends(get_operations_service)]
@@ -81,6 +82,11 @@ async def list_items(
 @router.get("/items/{item_id}", response_model=ContentItemRead)
 async def get_item(item_id: uuid.UUID, service: ServiceDep) -> object:
     return await service.get_item(item_id)
+
+
+@router.get("/items/{item_id}/progress")
+async def item_progress(item_id: uuid.UUID, service: ServiceDep) -> object:
+    return await PipelineProgressService(service.session).for_item(item_id)
 
 
 @router.patch("/items/{item_id}", response_model=ContentItemRead)

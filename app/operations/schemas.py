@@ -194,6 +194,7 @@ class OperationsStatus(BaseModel):
     published_this_week: int
     blocked_items: int
     stale_runs: int
+    active_jobs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CalendarEntry(BaseModel):

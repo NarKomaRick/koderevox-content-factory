@@ -1,6 +1,8 @@
+import asyncio
 import base64
+import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -130,7 +132,90 @@ async def receive_producer_prompt(
         await message.answer("Не удалось создать Producer run. Проверьте, включён ли Producer.")
         return
     await state.clear()
-    await message.answer(f"✅ Producer run created: {run['id']}\n🔎 Исследую тему")
+    progress_message = await message.answer(
+        f"🎬 Producer run created: {run['id']}\n\n🔵 Запускаю исследование\n\n"
+        "Осталось: оценка пока недоступна"
+    )
+    await backend.attach_progress_message(
+        run["id"], chat_id=progress_message.chat.id, message_id=progress_message.message_id
+    )
+    asyncio.create_task(_watch_producer_progress(progress_message, backend, run["id"]))
+
+
+async def _watch_producer_progress(
+    message: Message, backend: BackendClient, run_id: str, *, interval: float = 5
+) -> None:
+    last_text = ""
+    last_stage = ""
+    last_edit = 0.0
+    try:
+        for _ in range(360):
+            await asyncio.sleep(interval)
+            progress = await backend.producer_progress(run_id)
+            if not progress:
+                continue
+            current = progress.get("current") or {}
+            state = progress.get("state", "running")
+            stage = current.get("stage_label") or "Подготавливаю этап"
+            message_text = _format_progress_message(stage, state, current, progress)
+            now = time.monotonic()
+            if message_text != last_text and (
+                stage != last_stage
+                or now - last_edit >= 20
+                or state in {"completed", "failed", "retrying"}
+            ):
+                await message.edit_text(message_text)
+                last_text = message_text
+                last_stage = stage
+                last_edit = now
+            if state in {"completed", "failed", "cancelled"}:
+                return
+    except (asyncio.CancelledError, httpx.HTTPError):
+        return
+
+
+def _format_progress_message(
+    stage: str, state: str, current: dict[str, object], progress: dict[str, object]
+) -> str:
+    icon = (
+        "✅"
+        if state == "completed"
+        else "❌"
+        if state == "failed"
+        else "⏸"
+        if state == "waiting"
+        else "🔵"
+    )
+    overall = progress.get("overall_progress")
+    overall_text = "—" if overall is None else f"{round(float(str(overall)) * 100)}%"
+    eta = progress.get("estimated_remaining_seconds")
+    eta_text = (
+        "оценка пока недоступна" if eta is None else f"примерно {round(float(str(eta)) / 60)} мин"
+    )
+    elapsed = _format_elapsed(current.get("started_at"))
+    elapsed_line = f"\nПрошло: {elapsed}" if elapsed else ""
+    return (
+        f"🎬 Работа Producer\n\nОбщий прогресс: {overall_text}\n{icon} {stage}\n\n"
+        f"Сейчас: {current.get('message') or stage}{elapsed_line}\nОсталось: {eta_text}"
+    )
+
+
+def _format_elapsed(started_at: object) -> str | None:
+    if not started_at:
+        return None
+    try:
+        started = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=UTC)
+    seconds = max(0, int((datetime.now(UTC) - started).total_seconds()))
+    if seconds < 60:
+        return f"{seconds} сек"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} мин"
+    return f"{minutes // 60} ч {minutes % 60} мин"
 
 
 @router.message(F.text == "📊 Статус студии")
@@ -155,9 +240,7 @@ async def operations_calendar(message: Message, backend: BackendClient) -> None:
     lines = ["🗓 Ближайшие ролики:"]
     for item in items[:10]:
         topic = item.get("topic_hint") or item.get("pillar") or "тема не выбрана"
-        lines.append(
-            f"• {item.get('scheduled_for', 'без даты')} — {topic} [{item.get('status')}]"
-        )
+        lines.append(f"• {item.get('scheduled_for', 'без даты')} — {topic} [{item.get('status')}]")
     await message.answer("\n".join(lines))
 
 

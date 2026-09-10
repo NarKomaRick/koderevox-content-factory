@@ -155,6 +155,13 @@ class Settings(BaseSettings):
     operations_max_retries_per_day: int = Field(default=20, ge=0, le=1000)
     operations_auto_publish: bool = False
 
+    # Cross-pipeline durable progress and Telegram edit policy.
+    progress_updates_enabled: bool = True
+    progress_update_interval_seconds: int = Field(default=20, ge=5, le=300)
+    progress_min_percent_delta: float = Field(default=0.03, ge=0.01, le=1)
+    progress_detail_level: str = "normal"
+    progress_show_eta: bool = True
+
     publish_scheduler_interval_seconds: int = Field(default=30, ge=1, le=3600)
     publish_max_attempts: int = Field(default=5, ge=1, le=20)
     celery_publish_concurrency: int = Field(default=2, ge=1, le=32)

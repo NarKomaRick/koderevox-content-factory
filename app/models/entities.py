@@ -943,6 +943,69 @@ class OperationsAuditEvent(Base):
     )
 
 
+class JobProgress(Base):
+    """Durable current progress for any long-running pipeline job."""
+
+    __tablename__ = "job_progress"
+    __table_args__ = (UniqueConstraint("job_type", "job_id", name="uq_job_progress_job"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    job_type: Mapped[str] = mapped_column(String(32), index=True)
+    job_id: Mapped[str] = mapped_column(String(255), index=True)
+    content_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("content_items.id", ondelete="SET NULL"), index=True
+    )
+    producer_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("producer_runs.id", ondelete="SET NULL"), index=True
+    )
+    director_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("director_runs.id", ondelete="SET NULL"), index=True
+    )
+    production_project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="SET NULL"), index=True
+    )
+    state: Mapped[str] = mapped_column(String(24), default="created", index=True)
+    stage: Mapped[str] = mapped_column(String(64), default="created", index=True)
+    stage_label: Mapped[str] = mapped_column(String(255), default="")
+    step_index: Mapped[int | None] = mapped_column(Integer)
+    step_total: Mapped[int | None] = mapped_column(Integer)
+    stage_progress: Mapped[float | None] = mapped_column(Float)
+    message: Mapped[str] = mapped_column(String(2000), default="")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc, index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    estimated_remaining_seconds: Mapped[float | None] = mapped_column(Float)
+    eta_confidence: Mapped[str] = mapped_column(String(16), default="none")
+    error_code: Mapped[str | None] = mapped_column(String(128))
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    source_kind: Mapped[str] = mapped_column(String(16), default="production")
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+
+
+class ProgressEvent(Base):
+    """Throttled progress history used for restart visibility and ETA samples."""
+
+    __tablename__ = "progress_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    progress_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("job_progress.id", ondelete="CASCADE"), index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(24), index=True)
+    stage: Mapped[str] = mapped_column(String(64), index=True)
+    stage_progress: Mapped[float | None] = mapped_column(Float)
+    message: Mapped[str] = mapped_column(String(2000), default="")
+    source_kind: Mapped[str] = mapped_column(String(16), default="production", index=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, index=True
+    )
+    duration_seconds: Mapped[float | None] = mapped_column(Float)
+
+
 class RuntimeSetting(Base):
     __tablename__ = "runtime_settings"
     __table_args__ = (

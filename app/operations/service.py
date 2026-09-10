@@ -20,7 +20,12 @@ from app.models import (
 )
 from app.operations.audit import audit
 from app.operations.clock import Clock, SystemClock
-from app.operations.domain import ApprovalStatus, ContentItemStatus, ManualPriority
+from app.operations.domain import (
+    ApprovalStatus,
+    ContentItemStatus,
+    ManualPriority,
+    ensure_content_item_transition,
+)
 from app.operations.policies import OperationsPolicy
 from app.operations.schemas import (
     CampaignCreate,
@@ -41,6 +46,11 @@ class OperationsService:
         self.settings = settings or Settings()
         self.clock = clock or SystemClock()
         self.policy = OperationsPolicy.from_settings(self.settings)
+
+    @staticmethod
+    def transition(item: ContentItem, target: ContentItemStatus) -> None:
+        ensure_content_item_transition(item.status, target)
+        item.status = target
 
     async def create_strategy(self, data: StrategyCreate) -> ContentStrategy:
         project = await self.session.get(Project, data.project_id)
@@ -186,7 +196,7 @@ class OperationsService:
         item = await self.get_item(item_id)
         if item.status in {ContentItemStatus.PUBLISHED, ContentItemStatus.CANCELLED}:
             return item
-        item.status = ContentItemStatus.CANCELLED
+        self.transition(item, ContentItemStatus.CANCELLED)
         item.blocked_reason = "cancelled"
         if item.producer_run_id:
             run = await self.session.get(ProducerRun, item.producer_run_id)
@@ -207,9 +217,9 @@ class OperationsService:
     async def set_paused(self, item_id: uuid.UUID, paused: bool) -> ContentItem:
         item = await self.get_item(item_id)
         if paused and item.status not in {ContentItemStatus.PUBLISHED, ContentItemStatus.CANCELLED}:
-            item.status = ContentItemStatus.PAUSED
+            self.transition(item, ContentItemStatus.PAUSED)
         elif not paused and item.status == ContentItemStatus.PAUSED:
-            item.status = ContentItemStatus.QUEUED
+            self.transition(item, ContentItemStatus.QUEUED)
         await self.session.commit()
         return item
 
@@ -221,7 +231,7 @@ class OperationsService:
             ContentItemStatus.DEFERRED,
         }:
             raise InvalidStateError("INVALID_TRANSITION")
-        item.status = ContentItemStatus.QUEUED
+        self.transition(item, ContentItemStatus.QUEUED)
         item.blocked_reason = None
         await audit(
             self.session,

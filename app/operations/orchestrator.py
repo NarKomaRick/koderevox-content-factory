@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.models import ContentItem, ContentStrategy
+from app.models import ContentItem, ContentStrategy, JobProgress
 from app.operations.clock import Clock, SystemClock
 from app.operations.domain import ContentItemStatus
 from app.operations.execution import ExecutionCoordinator
@@ -141,6 +141,11 @@ class StudioOrchestrator:
             )
             or 0
         )
+        active_progress = (
+            await self.session.scalars(
+                select(JobProgress).where(JobProgress.state.in_(["running", "retrying", "waiting"]))
+            )
+        ).all()
         approvals = counts.get(ContentItemStatus.AWAITING_SCRIPT_APPROVAL, 0) + counts.get(
             ContentItemStatus.AWAITING_PREVIEW_APPROVAL, 0
         )
@@ -157,4 +162,16 @@ class StudioOrchestrator:
             published_this_week=published,
             blocked_items=sum(counts.get(status, 0) for status in (ContentItemStatus.DEFERRED,)),
             stale_runs=0,
+            active_jobs=[
+                {
+                    "job_type": row.job_type,
+                    "job_id": row.job_id,
+                    "stage": row.stage,
+                    "stage_label": row.stage_label,
+                    "progress": row.stage_progress,
+                    "state": row.state,
+                    "updated_at": row.updated_at,
+                }
+                for row in active_progress
+            ],
         )

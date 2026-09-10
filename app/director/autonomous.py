@@ -25,6 +25,7 @@ from app.director.schemas import DirectorPlan, OutputProfile, StoryAnalysis
 from app.director.story import DeterministicStoryAnalyst, StructuredStoryAnalyst
 from app.models import DirectorRun, ProductionProject, VideoProject, VoiceoverTrack
 from app.models.enums import AssetType, VoiceoverStatus
+from app.progress import ProgressReporter
 from app.quality.critic_roles import ReviewAggregator
 from app.storage.local import LocalStorage
 
@@ -51,10 +52,32 @@ class AutonomousDirector:
         self.review_aggregator = ReviewAggregator(settings=settings)
         self.preferences = DirectorPreferences(session)
 
+    def _progress(self, run: DirectorRun) -> ProgressReporter:
+        return ProgressReporter(
+            self.session,
+            "director",
+            run.id,
+            source_kind="fake" if self.settings.ai_provider == "mock" else "production",
+            director_run_id=run.id,
+            production_project_id=run.production_project_id,
+            min_delta=self.settings.progress_min_percent_delta,
+            min_interval_seconds=self.settings.progress_update_interval_seconds,
+        )
+
+    async def _stage(self, run: DirectorRun, status: str, message: str) -> None:
+        run.status = status
+        await self._progress(run).report_stage(
+            status,
+            step_index=run.step_count,
+            step_total=self.settings.director_max_steps,
+            message=message,
+            force=True,
+        )
+
     async def run(self, run: DirectorRun, *, render: bool = True) -> DirectorRun:
         started = time.monotonic()
         run.active = True
-        run.status = "analyzing_story"
+        await self._stage(run, "analyzing_story", "Анализирую историю")
         run.director_iteration += 1
         await self.session.commit()
         try:
@@ -64,7 +87,7 @@ class AutonomousDirector:
             await self.session.commit()
             await logger.ainfo("story_analysis_created", run_id=str(run.id), beats=len(story.beats))
 
-            run.status = "planning"
+            await self._stage(run, "planning", "Планирую постановку")
             audio = await self._audio(context)
             run.audio_intelligence_json = audio
             plan = await self._plan(context, story, audio, run.instruction)
@@ -72,7 +95,7 @@ class AutonomousDirector:
             await self.session.commit()
             await logger.ainfo("director_plan_created", run_id=str(run.id), beats=len(plan.beats))
 
-            run.status = "assembling"
+            await self._stage(run, "assembling", "Собираю rough cut")
             await self._rough_cut(run, context, plan)
             rough = await self.runtime._timeline()
             run.current_revision_id = (
@@ -81,7 +104,7 @@ class AutonomousDirector:
             run.metrics_json = {"rough_items": len(rough.items)}
             await self.session.commit()
 
-            run.status = "reviewing"
+            await self._stage(run, "reviewing", "Проверяю монтаж")
             review = await self._review(run, context, rough, story, plan, audio, render=render)
             run.quality_report_json = review.model_dump(mode="json")
             run.review_iterations = 1
@@ -94,7 +117,7 @@ class AutonomousDirector:
                 review.hard_failures
                 and run.review_iterations < self.settings.director_max_review_iterations
             ):
-                run.status = "correcting"
+                await self._stage(run, "correcting", "Исправляю найденное")
                 await self._apply_safe_corrections(run, review)
                 corrected = await self.runtime._timeline()
                 review = self.review_aggregator.evaluate(
@@ -113,7 +136,7 @@ class AutonomousDirector:
             if review.hard_failures:
                 raise RuntimeError("Hard Director validation failures remain")
             if render:
-                run.status = "finalizing"
+                await self._stage(run, "finalizing", "Финализирую видео")
                 final_result = await self.runtime.execute(
                     "finalize", {}, run=run, step=run.step_count + 1
                 )
@@ -134,6 +157,7 @@ class AutonomousDirector:
                 "final_render": "not_tested" if not render else "requested",
             }
             await self.session.commit()
+            await self._progress(run).complete(message="Director завершил работу")
             await logger.ainfo("director_completed", run_id=str(run.id), status=run.status)
             return run
         except Exception as exc:
@@ -145,6 +169,7 @@ class AutonomousDirector:
                 "runtime_seconds": round(time.monotonic() - started, 3),
             }
             await self.session.commit()
+            await self._progress(run).fail(error_code=type(exc).__name__, message=str(exc)[:2000])
             await logger.aerror(
                 "director_completed",
                 run_id=str(run.id),

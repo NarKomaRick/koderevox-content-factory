@@ -11,9 +11,15 @@ from app.operations.approvals import ApprovalManager
 from app.operations.audit import audit
 from app.operations.budgets import BudgetManager
 from app.operations.capacity import CapacityManager
-from app.operations.domain import ApprovalCheckpoint, ContentItemStatus, ErrorClass
+from app.operations.domain import (
+    ApprovalCheckpoint,
+    ContentItemStatus,
+    ErrorClass,
+    ensure_content_item_transition,
+)
 from app.operations.policies import OperationsPolicy
 from app.producer.runtime import ProducerRuntime, ProducerService
+from app.progress import ProgressReporter
 from app.schemas.producer import ProducerRunCreate
 
 
@@ -45,6 +51,7 @@ class ExecutionCoordinator:
         }:
             return item
         if item.status in {ContentItemStatus.PLANNED, ContentItemStatus.DEFERRED}:
+            ensure_content_item_transition(item.status, ContentItemStatus.QUEUED)
             item.status = ContentItemStatus.QUEUED
         if item.status == ContentItemStatus.QUEUED:
             budget = await self.budgets.check(strategy)
@@ -74,6 +81,7 @@ class ExecutionCoordinator:
                 )
                 await self.session.commit()
                 return item
+            ensure_content_item_transition(item.status, ContentItemStatus.PRODUCER_RUNNING)
             item.status = ContentItemStatus.PRODUCER_RUNNING
             item.current_stage = "producer"
             item.attempts += 1
@@ -105,6 +113,16 @@ class ExecutionCoordinator:
                 )
             )
             item.producer_run_id = run.id
+            await ProgressReporter(
+                self.session,
+                "producer",
+                run.id,
+                source_kind="fake" if self.fake else "production",
+                content_item_id=item.id,
+                producer_run_id=run.id,
+                min_delta=self.settings.progress_min_percent_delta,
+                min_interval_seconds=self.settings.progress_update_interval_seconds,
+            ).report_stage("understanding_goal", message="Понимаю задачу", force=True)
             if not self.fake:
                 from app.tasks.queue import CeleryProducerTaskQueue
 
@@ -120,6 +138,7 @@ class ExecutionCoordinator:
                     result.error or "Producer did not complete",
                 )
             item.production_project_id = result.production_project_id
+            ensure_content_item_transition(item.status, ContentItemStatus.PRODUCER_READY)
             item.status = ContentItemStatus.PRODUCER_READY
             await self.session.commit()
             if self.policy.requires_script_approval(strategy.approval_policy):
@@ -127,7 +146,12 @@ class ExecutionCoordinator:
                     item.id, ApprovalCheckpoint.SCRIPT
                 )
                 return item
-        if item.status in {ContentItemStatus.PRODUCER_READY, ContentItemStatus.DIRECTOR_QUEUED}:
+        if item.status == ContentItemStatus.PRODUCER_READY:
+            ensure_content_item_transition(item.status, ContentItemStatus.DIRECTOR_QUEUED)
+            item.status = ContentItemStatus.DIRECTOR_QUEUED
+            await self.session.commit()
+        if item.status == ContentItemStatus.DIRECTOR_QUEUED:
+            ensure_content_item_transition(item.status, ContentItemStatus.DIRECTOR_RUNNING)
             item.status = ContentItemStatus.DIRECTOR_RUNNING
             item.current_stage = "director"
             await audit(
@@ -143,6 +167,29 @@ class ExecutionCoordinator:
                 item.status = ContentItemStatus.DIRECTOR_QUEUED
                 await self.session.commit()
                 return item
+            director_progress = ProgressReporter(
+                self.session,
+                "director",
+                f"content-item:{item.id}",
+                source_kind="fake",
+                content_item_id=item.id,
+                production_project_id=item.production_project_id,
+            )
+            await director_progress.report_stage(
+                "assembling", message="Собираю rough cut", force=True
+            )
+            await director_progress.complete(message="Fake Director завершил работу")
+            render_progress = ProgressReporter(
+                self.session,
+                "render",
+                f"content-item:{item.id}",
+                source_kind="fake",
+                content_item_id=item.id,
+                production_project_id=item.production_project_id,
+            )
+            await render_progress.report_stage("render", message="Рендерю preview", force=True)
+            await render_progress.complete(message="Fake render завершён")
+            ensure_content_item_transition(item.status, ContentItemStatus.PREVIEW_READY)
             item.status = ContentItemStatus.PREVIEW_READY
             item.current_stage = "render"
             await audit(
@@ -162,6 +209,7 @@ class ExecutionCoordinator:
                     item.id, ApprovalCheckpoint.BEFORE_PUBLISH
                 )
             else:
+                ensure_content_item_transition(item.status, ContentItemStatus.READY_TO_PUBLISH)
                 item.status = ContentItemStatus.READY_TO_PUBLISH
                 await self.session.commit()
         return item
@@ -177,8 +225,10 @@ class ExecutionCoordinator:
             return item
         if not (self.fake and (strategy.auto_publish and self.settings.operations_auto_publish)):
             return item
+        ensure_content_item_transition(item.status, ContentItemStatus.PUBLISHING)
         item.status = ContentItemStatus.PUBLISHING
         await self.session.commit()
+        ensure_content_item_transition(item.status, ContentItemStatus.PUBLISHED)
         item.status = ContentItemStatus.PUBLISHED
         item.completed_at = datetime.now(UTC)
         await audit(
@@ -209,6 +259,7 @@ class ExecutionCoordinator:
             ErrorClass.RATE_LIMIT,
             ErrorClass.EXTERNAL_DEPENDENCY,
         }:
+            ensure_content_item_transition(item.status, ContentItemStatus.QUEUED)
             item.status = ContentItemStatus.QUEUED
             await audit(
                 self.session,
@@ -220,6 +271,7 @@ class ExecutionCoordinator:
                 data={"retry_count": item.retry_count},
             )
         else:
+            ensure_content_item_transition(item.status, ContentItemStatus.MANUAL_REQUIRED)
             item.status = ContentItemStatus.MANUAL_REQUIRED
             await audit(
                 self.session,

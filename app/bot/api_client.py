@@ -27,6 +27,18 @@ class BackendClient:
     async def operations_status(self) -> dict[str, Any]:
         return await self._request("GET", "/operations/status")
 
+    async def producer_progress(self, run_id: str) -> dict[str, Any] | None:
+        return await self._request("GET", f"/producer/runs/{run_id}/progress")
+
+    async def attach_progress_message(
+        self, run_id: str, *, chat_id: int, message_id: int
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/producer/runs/{run_id}/progress-message",
+            json={"chat_id": chat_id, "message_id": message_id},
+        )
+
     async def operations_calendar(self) -> list[dict[str, Any]]:
         return await self._request("GET", "/operations/calendar")
 
