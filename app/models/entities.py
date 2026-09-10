@@ -510,6 +510,61 @@ class TimelineRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class DirectorRun(Base):
+    """Durable state for one bounded Director orchestration run."""
+
+    __tablename__ = "director_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    production_project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    instruction: Mapped[str] = mapped_column(Text, default="")
+    director_iteration: Mapped[int] = mapped_column(Integer, default=0)
+    step_count: Mapped[int] = mapped_column(Integer, default=0)
+    llm_call_count: Mapped[int] = mapped_column(Integer, default=0)
+    preview_count: Mapped[int] = mapped_column(Integer, default=0)
+    external_asset_count: Mapped[int] = mapped_column(Integer, default=0)
+    external_asset_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    current_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("timeline_revisions.id", ondelete="SET NULL")
+    )
+    best_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("timeline_revisions.id", ondelete="SET NULL")
+    )
+    context_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    history_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, default=list)
+    quality_report_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+
+class DirectorAction(Base):
+    """An idempotent, inspectable record of a Director tool call."""
+
+    __tablename__ = "director_actions"
+    __table_args__ = (UniqueConstraint("run_id", "tool_call_id", name="uq_director_action_call"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("director_runs.id", ondelete="CASCADE"), index=True
+    )
+    tool_call_id: Mapped[str] = mapped_column(String(255))
+    step_number: Mapped[int] = mapped_column(Integer)
+    tool_name: Mapped[str] = mapped_column(String(100))
+    arguments: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("timeline_revisions.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
 class RuntimeSetting(Base):
     __tablename__ = "runtime_settings"
     __table_args__ = (

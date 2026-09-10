@@ -1,9 +1,11 @@
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from app.api.dependencies import (
     AssemblyDep,
+    DirectorDep,
+    DirectorQueueDep,
     ProductionMaterialDep,
     ProductionProjectDep,
     ProductionRenderQueueDep,
@@ -11,7 +13,16 @@ from app.api.dependencies import (
     TimelineRevisionDep,
     VoiceoverDep,
 )
-from app.models import ProductionMaterial
+from app.core.config import get_settings
+from app.director.runtime import DirectorRuntime
+from app.director.schemas import (
+    DirectorInstructionRequest,
+    DirectorRunRead,
+    DirectorRunRequest,
+    OutputProfile,
+)
+from app.models import ProductionMaterial, TimelineRevision
+from app.quality.visual_critic import DeterministicVisualCritic
 from app.schemas.production import (
     MaterialAttach,
     PlacementRequest,
@@ -19,6 +30,7 @@ from app.schemas.production import (
     ProductionMaterialRead,
     ProductionProjectCreate,
     ProductionProjectRead,
+    ProductionTimeline,
     ReplanRequest,
     ScriptEditRequest,
     ScriptVersionRead,
@@ -26,6 +38,7 @@ from app.schemas.production import (
     VoiceoverRead,
 )
 from app.schemas.video import RenderEnqueueResponse
+from app.services.errors import InvalidStateError, NotFoundError
 
 router = APIRouter(prefix="/production-projects", tags=["production-studio"])
 
@@ -33,6 +46,85 @@ router = APIRouter(prefix="/production-projects", tags=["production-studio"])
 @router.post("", response_model=ProductionProjectRead, status_code=status.HTTP_201_CREATED)
 async def create_production(data: ProductionProjectCreate, service: ProductionProjectDep) -> object:
     return await service.create(data)
+
+
+@router.post("/{production_project_id}/director/run", response_model=DirectorRunRead)
+async def run_director(
+    production_project_id: uuid.UUID,
+    data: DirectorRunRequest,
+    director: DirectorDep,
+    queue: DirectorQueueDep,
+) -> object:
+    if not get_settings().director_enabled:
+        raise InvalidStateError("Director runtime is disabled")
+    run = await director.start(production_project_id, data.instruction)
+    queue.enqueue(run.id)
+    return run
+
+
+@router.post("/{production_project_id}/director/instruct", response_model=DirectorRunRead)
+async def instruct_director(
+    production_project_id: uuid.UUID,
+    data: DirectorInstructionRequest,
+    director: DirectorDep,
+    queue: DirectorQueueDep,
+) -> object:
+    if not get_settings().director_enabled:
+        raise InvalidStateError("Director runtime is disabled")
+    run = await director.start(production_project_id, data.instruction)
+    queue.enqueue(run.id)
+    return run
+
+
+@router.get("/{production_project_id}/director/status", response_model=DirectorRunRead)
+async def director_status(production_project_id: uuid.UUID, director: DirectorDep) -> object:
+    run = await director.status(production_project_id)
+    if run is None:
+        raise NotFoundError("Director run not found")
+    return run
+
+
+@router.post("/{production_project_id}/preview", response_model=RenderEnqueueResponse)
+async def director_preview(
+    production_project_id: uuid.UUID,
+    queue: ProductionRenderQueueDep,
+) -> RenderEnqueueResponse:
+    return RenderEnqueueResponse(
+        task_id=queue.enqueue(production_project_id, "preview"), queued=True
+    )
+
+
+@router.get("/{production_project_id}/quality")
+async def production_quality(
+    production_project_id: uuid.UUID, director: DirectorDep
+) -> dict[str, object]:
+    context = await DirectorRuntime(
+        director.session, production_project_id, director.settings
+    ).context()
+    timeline_data = context["timeline"]
+    if not timeline_data.get("revision_id"):
+        raise NotFoundError("Active timeline not found")
+    revision = await director.session.get(TimelineRevision, timeline_data["revision_id"])
+    if revision is None:
+        raise NotFoundError("Active timeline not found")
+    timeline = ProductionTimeline.model_validate(revision.timeline_json)
+    profile = OutputProfile.model_validate(context["platform"])
+    return DeterministicVisualCritic(director.settings).evaluate(timeline, profile)
+
+
+@router.get("/{production_project_id}/assets/search")
+async def search_production_assets(
+    production_project_id: uuid.UUID,
+    director: DirectorDep,
+    description: str = Query(min_length=2, max_length=1000),
+) -> dict[str, object]:
+    # This endpoint intentionally searches only imported/cached project assets.
+    result = await DirectorRuntime(
+        director.session, production_project_id, director.settings
+    ).execute("find_visuals", {"description": description})
+    if not result.ok:
+        raise InvalidStateError(result.error["message"] if result.error else "Asset search failed")
+    return result.data
 
 
 @router.get("/user/{user_id}", response_model=list[ProductionProjectRead])

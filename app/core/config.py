@@ -99,6 +99,17 @@ class Settings(BaseSettings):
     app_master_key: str = ""
     setup_sensitive_rate_limit_seconds: int = Field(default=10, ge=1, le=3600)
 
+    # Phase 6: bounded, opt-in LLM Director runtime limits.
+    director_enabled: bool = False
+    director_max_steps: int = Field(default=24, ge=1, le=200)
+    director_max_llm_calls: int = Field(default=12, ge=1, le=100)
+    director_max_preview_renders: int = Field(default=3, ge=0, le=20)
+    director_max_critic_iterations: int = Field(default=3, ge=0, le=10)
+    director_max_external_assets: int = Field(default=5, ge=0, le=50)
+    director_max_external_bytes: int = Field(default=100 * 1024 * 1024, ge=0)
+    director_allow_web_assets: bool = False
+    director_context_asset_limit: int = Field(default=100, ge=1, le=1000)
+
     publish_scheduler_interval_seconds: int = Field(default=30, ge=1, le=3600)
     publish_max_attempts: int = Field(default=5, ge=1, le=20)
     celery_publish_concurrency: int = Field(default=2, ge=1, le=32)

@@ -9,6 +9,7 @@ from app.ai.base import AIProvider
 from app.ai.factory import create_ai_provider
 from app.core.config import get_settings
 from app.db.session import get_session
+from app.director.runtime import DirectorRunService
 from app.services.assets import AssetService
 from app.services.content import ContentService
 from app.services.credentials import EncryptedCredentialProvider, TokenManager
@@ -38,10 +39,12 @@ from app.services.visual_plans import VisualPlanService
 from app.services.voiceovers import VoiceoverService
 from app.storage.local import LocalStorage
 from app.tasks.queue import (
+    CeleryDirectorTaskQueue,
     CeleryProductionRenderTaskQueue,
     CeleryPublicationTaskQueue,
     CelerySourceTaskQueue,
     CeleryVideoRenderTaskQueue,
+    DirectorTaskQueue,
     ProductionRenderTaskQueue,
     PublicationTaskQueue,
     SourceTaskQueue,
@@ -297,3 +300,18 @@ def get_production_render_queue() -> ProductionRenderTaskQueue:
 ProductionRenderQueueDep = Annotated[
     ProductionRenderTaskQueue, Depends(get_production_render_queue)
 ]
+
+
+def get_director_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> DirectorRunService:
+    return DirectorRunService(session, get_settings())
+
+
+@lru_cache
+def get_director_queue() -> DirectorTaskQueue:
+    return CeleryDirectorTaskQueue()
+
+
+DirectorDep = Annotated[DirectorRunService, Depends(get_director_service)]
+DirectorQueueDep = Annotated[DirectorTaskQueue, Depends(get_director_queue)]

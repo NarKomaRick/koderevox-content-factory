@@ -47,8 +47,17 @@ class FasterWhisperProvider:
                 language=language,
             )
         except TypeError:
-            # Keeps compatibility with older faster-whisper-compatible adapters.
-            raw_segments, info = model.transcribe(str(media_path), vad_filter=True)
+            # Keep compatibility with adapters that predate the optional language argument.
+            try:
+                raw_segments, info = model.transcribe(
+                    str(media_path),
+                    vad_filter=True,
+                    word_timestamps=True,
+                    initial_prompt=initial_prompt,
+                )
+            except TypeError:
+                # Last fallback for minimal faster-whisper-compatible adapters.
+                raw_segments, info = model.transcribe(str(media_path), vad_filter=True)
         segments = [
             TranscriptSegment(
                 start=item.start,

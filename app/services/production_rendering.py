@@ -13,6 +13,7 @@ from PIL.ImageFont import FreeTypeFont
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.editing.graphics import GraphicsRenderer
 from app.models import (
     ProductionProject,
     Project,
@@ -185,7 +186,12 @@ class ProductionRenderService:
     ) -> list[tuple[TimelineItem, Path, bool]]:
         result: list[tuple[TimelineItem, Path, bool]] = []
         for index, item in enumerate(timeline.items):
-            if item.track not in {TimelineTrack.BROLL, TimelineTrack.OVERLAY, TimelineTrack.TEXT}:
+            if item.track not in {
+                TimelineTrack.BROLL,
+                TimelineTrack.OVERLAY,
+                TimelineTrack.GRAPHICS,
+                TimelineTrack.TEXT,
+            }:
                 continue
             if item.asset_id:
                 asset = await self.session.get(VisualAsset, item.asset_id)
@@ -209,6 +215,18 @@ class ProductionRenderService:
                     continue
                 is_video = asset.type in {AssetType.VIDEO, AssetType.SCREEN_RECORDING}
                 result.append((item, path, is_video))
+            elif item.metadata.get("graphic"):
+                graphic = workspace / f"graphic-{index}.png"
+                await GraphicsRenderer().render(
+                    str(item.metadata["graphic"]),
+                    item.metadata.get("content", {}),
+                    graphic,
+                    width=self.settings.preview_width,
+                    height=self.settings.preview_height,
+                    font_path=self.settings.video_font_path,
+                    style=str(item.metadata.get("style", "technical")),
+                )
+                result.append((item, graphic, False))
             elif item.text:
                 path = workspace / f"card-{index}.png"
                 await asyncio.to_thread(self._draw_card, path, item.text)
@@ -255,12 +273,23 @@ class ProductionRenderService:
             else:
                 width, height = profile.width, profile.height
                 x, y = "0", "0"
-            filters.append(
-                f"[{offset}:v]setsar=1,scale={width}:{height}:"
-                "force_original_aspect_ratio=decrease:force_divisible_by=2,"
-                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x10141b,"
-                f"trim=duration={duration:.3f},setpts=PTS-STARTPTS+{item.start:.3f}/TB[vis{offset}]"
-            )
+            if item.layout == "blur_background_fit":
+                filters.append(
+                    f"[{offset}:v]setsar=1,split=2[bgraw{offset}][fgraw{offset}];"
+                    f"[bgraw{offset}]scale={profile.width}:{profile.height}:force_original_aspect_ratio=increase,"
+                    f"crop={profile.width}:{profile.height},boxblur=20:2[bg{offset}];"
+                    f"[fgraw{offset}]scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                    f"pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2:color=0x10141b[fg{offset}];"
+                    f"[bg{offset}][fg{offset}]overlay=(W-w)/2:(H-h)/2,trim=duration={duration:.3f},"
+                    f"setpts=PTS-STARTPTS+{item.start:.3f}/TB[vis{offset}]"
+                )
+            else:
+                filters.append(
+                    f"[{offset}:v]setsar=1,scale={width}:{height}:"
+                    "force_original_aspect_ratio=decrease:force_divisible_by=2,"
+                    f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color=0x10141b,"
+                    f"trim=duration={duration:.3f},setpts=PTS-STARTPTS+{item.start:.3f}/TB[vis{offset}]"
+                )
             next_label = f"v{offset}"
             filters.append(
                 f"[{current}][vis{offset}]overlay=x={x}:y={y}:eof_action=pass:shortest=0:"

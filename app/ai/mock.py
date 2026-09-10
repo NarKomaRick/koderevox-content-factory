@@ -2,6 +2,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
+from app.director.schemas import DirectorToolCall, DirectorTurn
 from app.schemas.ai import (
     ContentAngleBatch,
     ContentIntelligence,
@@ -27,7 +28,12 @@ class MockAIProvider:
         response_model: type[OutputT],
     ) -> OutputT:
         data: object
-        if response_model is ScriptGeneration:
+        if response_model is DirectorTurn:
+            data = DirectorTurn(
+                reasoning="Deterministic local Director response.",
+                tool_calls=[DirectorToolCall(id="validate", name="validate_timeline")],
+            ).model_dump()
+        elif response_model is ScriptGeneration:
             current = user_prompt.partition("CURRENT_SCRIPT:\n")[2].partition(
                 "\n\nUSER_INSTRUCTION"
             )[0]

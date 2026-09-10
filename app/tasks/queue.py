@@ -3,6 +3,7 @@ from typing import Protocol
 
 import structlog
 
+from app.tasks.director import run_director_task
 from app.tasks.processing import process_source_note_task, process_source_task
 from app.tasks.publishing import poll_publication_task, publish_publication_task
 from app.tasks.rendering import (
@@ -76,6 +77,17 @@ class CeleryProductionRenderTaskQueue:
             profile=profile,
             task_id=str(result.id),
         )
+        return str(result.id)
+
+
+class DirectorTaskQueue(Protocol):
+    def enqueue(self, run_id: uuid.UUID) -> str: ...
+
+
+class CeleryDirectorTaskQueue:
+    def enqueue(self, run_id: uuid.UUID) -> str:
+        result = run_director_task.apply_async(args=[str(run_id)], queue="director")
+        logger.info("director_enqueued", run_id=str(run_id), task_id=str(result.id))
         return str(result.id)
 
 

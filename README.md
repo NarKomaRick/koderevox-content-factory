@@ -137,6 +137,23 @@ mypy app
 
 В репозитории есть unit- и integration-тесты для Telegram ingestion, AI/STT providers, edit plans, FFmpeg rendering, subtitles, preview delivery, публикаций, scheduler и security checks.
 
+## Phase 6 — LLM Director Runtime
+
+Director управляет монтажом через типизированные application-owned tools: контекст проекта,
+поиск готовых ассетов, clip selection, текст, графика, blur, layout, preview, validation,
+rollback и final render. Доступ выключен по умолчанию; для включения задайте
+`DIRECTOR_ENABLED=true`. Основные API endpoints находятся под
+`/production-projects/{id}/director/`: `run`, `instruct`, `status`, а также `preview`,
+`quality` и `assets/search`.
+
+Для offline capability smoke используйте:
+
+    python scripts/director_capability_test.py
+
+Скрипт отдельно отмечает deterministic fake Director и real OpenAI-compatible Director.
+Он требует `ffmpeg`, `ffprobe`, `espeak-ng` и доступную модель faster-whisper; артефакты
+пишутся в `data/director-test-runs/latest` и не должны коммититься.
+
 ## Лицензия
 
 См. файл [LICENSE](LICENSE).

@@ -13,13 +13,13 @@ class LocalStorage:
         target, relative = self._target(filename, category)
         await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(target.write_bytes, content)
-        return str(relative)
+        return relative.as_posix()
 
     async def save_file(self, filename: str, source: Path, category: str = "original") -> str:
         target, relative = self._target(filename, category)
         await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(shutil.copyfile, source, target)
-        return str(relative)
+        return relative.as_posix()
 
     def _target(self, filename: str, category: str) -> tuple[Path, Path]:
         now = datetime.now(UTC)

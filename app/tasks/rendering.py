@@ -35,7 +35,9 @@ def render_production_task(production_project_id: str, profile: str = "preview")
     try:
         run_async(notify_render(project.id, True))
     except Exception:
-        logger.exception("production_preview_notification_failed", production_project_id=production_project_id)
+        logger.exception(
+            "production_preview_notification_failed", production_project_id=production_project_id
+        )
     return str(project.id)
 
 
@@ -110,7 +112,7 @@ async def render_platform_variant_once(
     return project
 
 
-@celery_app.task(name="content_factory.render_platform_variant", max_retries=1)
+@celery_app.task(bind=True, name="content_factory.render_platform_variant", max_retries=1)
 def render_platform_variant_task(
     task: Task, video_project_id: str, fingerprint: str, variant_id: str
 ) -> str:

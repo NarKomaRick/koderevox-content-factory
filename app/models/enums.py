@@ -62,6 +62,7 @@ class TimelineTrack(StrEnum):
     VIDEO_BASE = "video_base"
     BROLL = "broll"
     OVERLAY = "overlay"
+    GRAPHICS = "graphics"
     TEXT = "text"
     SUBTITLES = "subtitles"
     MUSIC = "music"
