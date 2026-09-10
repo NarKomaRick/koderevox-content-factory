@@ -154,6 +154,24 @@ rollback и final render. Доступ выключен по умолчанию;
 Он требует `ffmpeg`, `ffprobe`, `espeak-ng` и доступную модель faster-whisper; артефакты
 пишутся в `data/director-test-runs/latest` и не должны коммититься.
 
+## Phase 7 — Autonomous Director Intelligence
+
+Поверх Phase 6 добавлен автономный workflow: story analysis → semantic beats → audio pacing
+signals → director plan → bounded rough cut → independent visual/story/continuity/pacing/
+technical review → local corrections → final. Knowledge retrieval использует небольшую
+проверенную базу `director_knowledge/`; web search остаётся opt-in и не является обязательным.
+
+Offline проверка:
+
+    python scripts/autonomous_director_test.py --fake
+
+Для реального провайдера:
+
+    python scripts/autonomous_director_test.py --real
+
+Отчёт разделяет fake/real Director, FFmpeg, TTS, vision и web search. В Telegram доступна
+кнопка `🧠 Автодиректор` при включённом `DIRECTOR_ENABLED`.
+
 ## Лицензия
 
 См. файл [LICENSE](LICENSE).

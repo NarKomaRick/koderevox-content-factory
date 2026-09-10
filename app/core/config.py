@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     director_max_llm_calls: int = Field(default=12, ge=1, le=100)
     director_max_preview_renders: int = Field(default=3, ge=0, le=20)
     director_max_critic_iterations: int = Field(default=3, ge=0, le=10)
+    director_max_review_iterations: int = Field(default=3, ge=0, le=10)
+    director_max_critic_calls: int = Field(default=15, ge=0, le=100)
+    director_max_correction_actions: int = Field(default=12, ge=0, le=100)
+    director_max_search_queries_per_beat: int = Field(default=3, ge=1, le=10)
+    director_target_quality: float = Field(default=8.0, ge=0, le=10)
     director_max_external_assets: int = Field(default=5, ge=0, le=50)
     director_max_external_bytes: int = Field(default=100 * 1024 * 1024, ge=0)
     director_allow_web_assets: bool = False

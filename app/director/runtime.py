@@ -21,14 +21,17 @@ from app.director.schemas import (
     DirectorToolResult,
     OutputProfile,
     RemoveItemOperation,
+    RevisionDiff,
     SetLayoutOperation,
     TimelineOperation,
+    VariantRequest,
 )
 from app.director.tools import DirectorToolRegistry, EmptyArguments, ToolDefinition
 from app.editing.layout import LayoutEngine
 from app.editing.validation import TimelineValidator
 from app.models import (
     DirectorRun,
+    DirectorVariant,
     ProductionProject,
     TimelineRevision,
     VideoProject,
@@ -86,6 +89,11 @@ class DirectorRuntime:
                 "find_visuals", "Find relevant cached assets and scene clips.", FindVisualsArguments
             ),
             ToolDefinition(
+                "find_visual_candidates",
+                "Return several explainable visual candidates; the Director chooses one.",
+                FindVisualsArguments,
+            ),
+            ToolDefinition(
                 "find_clip", "Select a concrete range from a long video asset.", FindClipArguments
             ),
             ToolDefinition(
@@ -128,6 +136,16 @@ class DirectorRuntime:
             ),
             ToolDefinition(
                 "undo", "Rollback to a previous revision without destructive edits.", UndoArguments
+            ),
+            ToolDefinition(
+                "create_variant",
+                "Create non-active local branches for a bounded range.",
+                VariantRequest,
+            ),
+            ToolDefinition(
+                "compare_revisions",
+                "Compare two immutable timeline revisions.",
+                CompareRevisionsArguments,
             ),
             ToolDefinition("finalize", "Validate and render the final output.", EmptyArguments),
         ]
@@ -178,7 +196,7 @@ class DirectorRuntime:
             return DirectorToolResult(
                 ok=True, data={"asset": self.context_builder._asset_manifest(asset)}
             )
-        if name in {"find_visuals", "find_clip"}:
+        if name in {"find_visuals", "find_visual_candidates", "find_clip"}:
             return await self._find(name, parsed)
         if name in {
             "add_visual",
@@ -211,6 +229,10 @@ class DirectorRuntime:
             return await self._validate()
         if name == "undo":
             return await self._undo(parsed.revision_id)
+        if name == "create_variant":
+            return await self._create_variant(parsed)
+        if name == "compare_revisions":
+            return await self._compare_revisions(parsed)
         if name == "finalize":
             validation = await self._validate()
             if not validation.ok:
@@ -252,7 +274,19 @@ class DirectorRuntime:
                     source_start=source_start,
                     source_end=source_end,
                     locked_by_user=operation.locked_by_user,
-                    metadata={"asset_type": asset.type.value, "director": True, "muted": True},
+                    metadata={
+                        "asset_type": asset.type.value,
+                        "director": True,
+                        "muted": True,
+                        "visual_intent": operation.visual_intent
+                        or {
+                            "purpose": "interest",
+                            "reason": (
+                                "Application-supplied visual selected for the requested range."
+                            ),
+                            "importance": 0.5,
+                        },
+                    },
                 )
             )
         elif isinstance(operation, AddTextOperation):
@@ -285,6 +319,8 @@ class DirectorRuntime:
                             "font_size": box.font_size,
                             "anchor": box.anchor,
                         },
+                        "semantic_role": operation.semantic_role,
+                        "reason": operation.reason or "Text clarifies the current story beat.",
                     },
                 )
             )
@@ -300,6 +336,8 @@ class DirectorRuntime:
                         "graphic": operation.kind,
                         "content": operation.content,
                         "style": operation.style,
+                        "reason": operation.reason
+                        or "Graphic explains or emphasizes the current beat.",
                     },
                 )
             )
@@ -427,7 +465,13 @@ class DirectorRuntime:
                     }
                 )
             asset_candidates.sort(key=lambda row: row["score"], reverse=True)
-            return DirectorToolResult(ok=True, data={"candidates": asset_candidates[:5]})
+            return DirectorToolResult(
+                ok=True,
+                data={
+                    "candidates": asset_candidates[:5],
+                    "selection_required": name == "find_visual_candidates",
+                },
+            )
 
     async def _validate(self) -> DirectorToolResult:
         timeline = await self._timeline()
@@ -503,6 +547,69 @@ class DirectorRuntime:
             ok=True,
             data={"revision_id": str(revision.id), "revision_number": revision.revision_number},
         )
+
+    async def _create_variant(self, parsed: VariantRequest) -> DirectorToolResult:
+        active = await self.revisions.active(self.production_project_id)
+        run = await self.session.scalar(
+            select(DirectorRun)
+            .where(
+                DirectorRun.production_project_id == self.production_project_id,
+                DirectorRun.active.is_(True),
+            )
+            .order_by(DirectorRun.created_at.desc())
+        )
+        if run is None:
+            raise DirectorToolError("DIRECTOR_RUN_NOT_FOUND", "An active Director run is required")
+        keys = []
+        for index in range(parsed.count):
+            key = f"{run.variant_count + index + 1}"
+            self.session.add(
+                DirectorVariant(
+                    run_id=run.id,
+                    base_revision_id=active.id,
+                    variant_key=key,
+                    start=parsed.start,
+                    end=parsed.end,
+                    goal=parsed.goal,
+                    timeline_json=active.timeline_json,
+                    quality_json={},
+                    selected=False,
+                )
+            )
+            keys.append(key)
+        run.variant_count += parsed.count
+        await self.session.commit()
+        return DirectorToolResult(
+            ok=True, data={"variant_keys": keys, "active_revision_id": str(active.id)}
+        )
+
+    async def _compare_revisions(self, parsed: "CompareRevisionsArguments") -> DirectorToolResult:
+        left = await self.session.get(TimelineRevision, parsed.from_revision)
+        right = await self.session.get(TimelineRevision, parsed.to_revision)
+        if left is None or right is None:
+            raise DirectorToolError("REVISION_NOT_FOUND", "Revision not found")
+        if (
+            left.production_project_id != self.production_project_id
+            or right.production_project_id != self.production_project_id
+        ):
+            raise DirectorToolError(
+                "REVISION_OUTSIDE_PROJECT", "Revision is outside the runtime project"
+            )
+        left_items = {str(item.get("id")): item for item in left.timeline_json.get("items", [])}
+        right_items = {str(item.get("id")): item for item in right.timeline_json.get("items", [])}
+        changed = [
+            (float(right_items[item_id].get("start", 0)), float(right_items[item_id].get("end", 0)))
+            for item_id in left_items.keys() & right_items.keys()
+            if left_items[item_id] != right_items[item_id]
+        ]
+        diff = RevisionDiff(
+            from_revision=left.id,
+            to_revision=right.id,
+            changed_ranges=changed,
+            added_items=list(right_items.keys() - left_items.keys()),
+            removed_items=list(left_items.keys() - right_items.keys()),
+        )
+        return DirectorToolResult(ok=True, data=diff.model_dump(mode="json"))
 
     async def _timeline(self) -> ProductionTimeline:
         production = await self.session.get(ProductionProject, self.production_project_id)
@@ -582,7 +689,13 @@ class DirectorRunService:
         self.session = session
         self.settings = settings or Settings()
 
-    async def start(self, production_project_id: uuid.UUID, instruction: str) -> DirectorRun:
+    async def start(
+        self,
+        production_project_id: uuid.UUID,
+        instruction: str,
+        *,
+        profile_name: str | None = None,
+    ) -> DirectorRun:
         production = await self.session.get(ProductionProject, production_project_id)
         if production is None:
             raise NotFoundError("ProductionProject not found")
@@ -595,7 +708,7 @@ class DirectorRunService:
         if active is not None:
             raise InvalidStateError("A Director run is already active for this production")
         context = await DirectorContextBuilder(self.session, self.settings).build(
-            production_project_id
+            production_project_id, profile_name=profile_name
         )
         run = DirectorRun(
             production_project_id=production_project_id,
@@ -646,6 +759,11 @@ class PreviewArguments(BaseModel):
 
 class UndoArguments(BaseModel):
     revision_id: uuid.UUID | None = None
+
+
+class CompareRevisionsArguments(BaseModel):
+    from_revision: uuid.UUID
+    to_revision: uuid.UUID
 
 
 class TransitionArguments(BaseModel):

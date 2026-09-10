@@ -43,7 +43,10 @@ def production_keyboard(project: dict[str, object]) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="🎬 Начать монтаж", callback_data=f"prod_assemble:{project_id}"
-                )
+                ),
+                InlineKeyboardButton(
+                    text="🧠 Автодиректор", callback_data=f"prod_autodirector:{project_id}"
+                ),
             ]
         )
     if project.get("active_timeline_revision_id"):
@@ -110,16 +113,14 @@ def develop_idea_keyboard(production_id: str) -> InlineKeyboardMarkup:
 
 
 def script_version_keyboard(production_id: str, script_id: str) -> InlineKeyboardMarkup:
-    token = base64.urlsafe_b64encode(
-        uuid.UUID(production_id).bytes + uuid.UUID(script_id).bytes
-    ).decode().rstrip("=")
+    token = (
+        base64.urlsafe_b64encode(uuid.UUID(production_id).bytes + uuid.UUID(script_id).bytes)
+        .decode()
+        .rstrip("=")
+    )
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="✅ Утвердить", callback_data=f"prod_approve:{token}"
-                )
-            ],
+            [InlineKeyboardButton(text="✅ Утвердить", callback_data=f"prod_approve:{token}")],
             [
                 InlineKeyboardButton(
                     text="✏️ Изменить", callback_data=f"prod_script_edit:{production_id}"

@@ -537,6 +537,12 @@ class DirectorRun(Base):
     context_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
     history_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON_DOCUMENT, default=list)
     quality_report_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    story_analysis_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    director_plan_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    audio_intelligence_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    metrics_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    review_iterations: Mapped[int] = mapped_column(Integer, default=0)
+    variant_count: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(
@@ -563,6 +569,57 @@ class DirectorAction(Base):
         ForeignKey("timeline_revisions.id", ondelete="SET NULL")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class DirectorVariant(Base):
+    """A non-active local revision branch used for bounded A/B comparisons."""
+
+    __tablename__ = "director_variants"
+    __table_args__ = (UniqueConstraint("run_id", "variant_key", name="uq_director_variant_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("director_runs.id", ondelete="CASCADE"), index=True
+    )
+    base_revision_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("timeline_revisions.id", ondelete="SET NULL")
+    )
+    variant_key: Mapped[str] = mapped_column(String(32))
+    start: Mapped[float] = mapped_column(Float)
+    end: Mapped[float] = mapped_column(Float)
+    goal: Mapped[str] = mapped_column(String(1000))
+    timeline_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    quality_json: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class DirectorPreference(Base):
+    """A confidence-weighted preference signal; never an online model update."""
+
+    __tablename__ = "director_preferences"
+    __table_args__ = (
+        UniqueConstraint(
+            "scope", "owner_id", "project_id", "key", name="uq_director_preference_owner"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    scope: Mapped[str] = mapped_column(String(16))
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    key: Mapped[str] = mapped_column(String(128))
+    value: Mapped[str] = mapped_column(String(512))
+    confidence: Mapped[float] = mapped_column(Float, default=0.25)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
 
 
 class RuntimeSetting(Base):

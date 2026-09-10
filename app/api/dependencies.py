@@ -39,6 +39,8 @@ from app.services.visual_plans import VisualPlanService
 from app.services.voiceovers import VoiceoverService
 from app.storage.local import LocalStorage
 from app.tasks.queue import (
+    AutonomousDirectorTaskQueue,
+    CeleryAutonomousDirectorTaskQueue,
     CeleryDirectorTaskQueue,
     CeleryProductionRenderTaskQueue,
     CeleryPublicationTaskQueue,
@@ -315,3 +317,13 @@ def get_director_queue() -> DirectorTaskQueue:
 
 DirectorDep = Annotated[DirectorRunService, Depends(get_director_service)]
 DirectorQueueDep = Annotated[DirectorTaskQueue, Depends(get_director_queue)]
+
+
+@lru_cache
+def get_autonomous_director_queue() -> AutonomousDirectorTaskQueue:
+    return CeleryAutonomousDirectorTaskQueue()
+
+
+AutonomousDirectorQueueDep = Annotated[
+    AutonomousDirectorTaskQueue, Depends(get_autonomous_director_queue)
+]

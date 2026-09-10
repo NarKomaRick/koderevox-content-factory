@@ -2,7 +2,13 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from app.director.schemas import DirectorToolCall, DirectorTurn
+from app.director.schemas import (
+    DirectorPlan,
+    DirectorToolCall,
+    DirectorTurn,
+    NaturalLanguageEdit,
+    StoryAnalysis,
+)
 from app.schemas.ai import (
     ContentAngleBatch,
     ContentIntelligence,
@@ -33,6 +39,65 @@ class MockAIProvider:
                 reasoning="Deterministic local Director response.",
                 tool_calls=[DirectorToolCall(id="validate", name="validate_timeline")],
             ).model_dump()
+        elif response_model is StoryAnalysis:
+            data = {
+                "goal": "Communicate the approved story clearly.",
+                "audience": "technical viewers",
+                "context": "",
+                "format": "short_video",
+                "core_message": "The system should make the causal relationship understandable.",
+                "conflict": "The viewer lacks the context needed to understand the risk.",
+                "tone": "clear, technical, dynamic",
+                "complexity": "medium",
+                "hook": {
+                    "type": "risk_reveal",
+                    "message": "The hidden risk appears in the opening.",
+                    "strength": 0.7,
+                },
+                "causal_chain": ["risk", "cause", "safer design"],
+                "emotional_arc": ["curiosity", "understanding", "confidence"],
+                "climax": "The viewer sees the safer design.",
+                "cta": "",
+                "beats": [
+                    {
+                        "id": "beat-1",
+                        "start": 0,
+                        "end": 4,
+                        "purpose": "hook",
+                        "meaning": "Reveal the central risk.",
+                        "importance": 1,
+                        "viewer_state": "curious",
+                        "viewer_should_understand": "There is a concrete risk.",
+                        "viewer_should_feel": "curiosity",
+                        "visual_need": "high",
+                        "visual_strategy": "specific product visual",
+                        "energy": 0.8,
+                        "pacing": "fast",
+                        "transition_intent": "hard_cut",
+                    }
+                ],
+            }
+        elif response_model is DirectorPlan:
+            data = {
+                "concept": "Show the consequence, then explain the safer relationship.",
+                "visual_language": "dark minimal technical UI",
+                "pacing_strategy": "Fast opening, calmer explanation, resolved ending.",
+                "graphics_strategy": (
+                    "Use diagrams when they explain relationships better than stock."
+                ),
+                "broll_strategy": (
+                    "Prefer specific project assets; reject decorative generic footage."
+                ),
+                "typography_strategy": "Short readable hierarchy within safe zones.",
+                "transition_strategy": "Mostly hard cuts with restrained fades.",
+                "visual_priority_guidance": ["user footage", "product UI", "code", "diagram"],
+                "style": {"background": "dark", "accent_usage": "sparse"},
+                "beats": [],
+                "pacing_map": [],
+                "knowledge_refs": [],
+            }
+        elif response_model is NaturalLanguageEdit:
+            data = {"ambiguous": True, "rationale": "A bounded scope is required before editing."}
         elif response_model is ScriptGeneration:
             current = user_prompt.partition("CURRENT_SCRIPT:\n")[2].partition(
                 "\n\nUSER_INSTRUCTION"

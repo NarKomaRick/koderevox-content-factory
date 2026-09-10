@@ -10,7 +10,12 @@ from app.ai.base import AIProvider
 from app.core.config import Settings
 from app.director.prompts import DIRECTOR_SYSTEM_PROMPT, build_director_user_prompt
 from app.director.runtime import DirectorRuntime
-from app.director.schemas import DirectorToolCall, DirectorToolResult, DirectorTurn
+from app.director.schemas import (
+    DirectorToolCall,
+    DirectorToolResult,
+    DirectorTurn,
+    ModelCapabilityProfile,
+)
 from app.models import DirectorAction, DirectorRun
 from app.services.errors import InvalidStateError
 
@@ -18,6 +23,8 @@ logger = structlog.get_logger()
 
 
 class DirectorModel(Protocol):
+    capabilities: ModelCapabilityProfile
+
     async def next_turn(
         self,
         *,
@@ -33,6 +40,13 @@ class StructuredDirectorModel:
 
     def __init__(self, provider: AIProvider) -> None:
         self.provider = provider
+        self.capabilities = ModelCapabilityProfile(
+            supports_tools=False,
+            supports_vision=False,
+            supports_video=False,
+            supports_json_schema=True,
+            max_context=8192,
+        )
 
     async def next_turn(
         self,
@@ -59,6 +73,7 @@ class FakeDirectorModel:
 
     def __init__(self) -> None:
         self.turn = 0
+        self.capabilities = ModelCapabilityProfile(max_context=8192)
 
     async def next_turn(
         self,

@@ -109,6 +109,15 @@ class BackendClient:
     async def assemble_production(self, production_id: str) -> dict[str, Any]:
         return await self._request("POST", f"/production-projects/{production_id}/assembly")
 
+    async def run_autonomous_director(
+        self, production_id: str, instruction: str
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/production-projects/{production_id}/director/autonomous",
+            json={"instruction": instruction},
+        )
+
     async def replan_production(self, production_id: str, instruction: str) -> dict[str, Any]:
         return await self._request(
             "POST",

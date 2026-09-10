@@ -4,6 +4,7 @@ from fastapi import APIRouter, Query, status
 
 from app.api.dependencies import (
     AssemblyDep,
+    AutonomousDirectorQueueDep,
     DirectorDep,
     DirectorQueueDep,
     ProductionMaterialDep,
@@ -57,7 +58,25 @@ async def run_director(
 ) -> object:
     if not get_settings().director_enabled:
         raise InvalidStateError("Director runtime is disabled")
-    run = await director.start(production_project_id, data.instruction)
+    run = await director.start(
+        production_project_id, data.instruction, profile_name=data.output_profile
+    )
+    queue.enqueue(run.id)
+    return run
+
+
+@router.post("/{production_project_id}/director/autonomous", response_model=DirectorRunRead)
+async def run_autonomous_director(
+    production_project_id: uuid.UUID,
+    data: DirectorRunRequest,
+    director: DirectorDep,
+    queue: AutonomousDirectorQueueDep,
+) -> object:
+    if not get_settings().director_enabled:
+        raise InvalidStateError("Director runtime is disabled")
+    run = await director.start(
+        production_project_id, data.instruction, profile_name=data.output_profile
+    )
     queue.enqueue(run.id)
     return run
 

@@ -118,6 +118,7 @@ class AddVisualOperation(BaseModel):
     layout: str = Field(default="fullscreen", max_length=64)
     track: Literal["video_base", "broll", "overlay"] = "broll"
     locked_by_user: bool = False
+    visual_intent: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def valid_range(self) -> AddVisualOperation:
@@ -141,6 +142,10 @@ class AddTextOperation(BaseModel):
     style: str = Field(default="accent", max_length=64)
     font_size: int | None = Field(default=None, ge=18, le=240)
     locked_by_user: bool = False
+    semantic_role: Literal["headline", "caption", "callout", "label", "code", "subtitle", "cta"] = (
+        "caption"
+    )
+    reason: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def valid_range(self) -> AddTextOperation:
@@ -172,6 +177,7 @@ class AddGraphicOperation(BaseModel):
     end: float = Field(gt=0)
     content: dict[str, Any] = Field(default_factory=dict)
     style: str = Field(default="technical", max_length=64)
+    reason: str | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def valid_range(self) -> AddGraphicOperation:
@@ -288,4 +294,211 @@ class DirectorRunRead(BaseModel):
     current_revision_id: uuid.UUID | None
     best_revision_id: uuid.UUID | None
     quality_report_json: dict[str, Any]
+    story_analysis_json: dict[str, Any]
+    director_plan_json: dict[str, Any]
+    audio_intelligence_json: dict[str, Any]
+    metrics_json: dict[str, Any]
+    review_iterations: int
+    variant_count: int
     error: str | None
+
+
+class HookAnalysis(BaseModel):
+    type: str = "opening_promise"
+    message: str = ""
+    strength: float = Field(default=0.5, ge=0, le=1)
+
+
+class StoryBeat(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    purpose: str = "explanation"
+    meaning: str = ""
+    importance: float = Field(default=0.5, ge=0, le=1)
+    viewer_state: str = "understanding"
+    viewer_should_understand: str = ""
+    viewer_should_feel: str = "curiosity"
+    visual_need: str = "medium"
+    visual_strategy: str = "specific relevant visual"
+    energy: float = Field(default=0.5, ge=0, le=1)
+    pacing: str = "medium"
+    transition_intent: str = "hard_cut"
+
+    @model_validator(mode="after")
+    def valid_range(self) -> StoryBeat:
+        if self.end <= self.start:
+            raise ValueError("story beat end must be greater than start")
+        return self
+
+
+class StoryAnalysis(BaseModel):
+    goal: str = ""
+    audience: str = ""
+    context: str = ""
+    format: str = "short_video"
+    core_message: str = ""
+    conflict: str = ""
+    tone: str = "clear, purposeful"
+    complexity: Literal["low", "medium", "high"] = "medium"
+    hook: HookAnalysis = Field(default_factory=HookAnalysis)
+    causal_chain: list[str] = Field(default_factory=list, max_length=12)
+    emotional_arc: list[str] = Field(default_factory=list, max_length=12)
+    climax: str = ""
+    cta: str = ""
+    beats: list[StoryBeat] = Field(default_factory=list, max_length=100)
+
+
+class PacingWindow(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    pace: Literal["very_slow", "slow", "medium", "medium_fast", "fast", "very_fast"] = "medium"
+    reason: str = ""
+    edit_density: Literal["low", "medium", "high"] = "medium"
+
+
+class DirectorPlan(BaseModel):
+    concept: str = ""
+    visual_language: str = ""
+    pacing_strategy: str = ""
+    graphics_strategy: str = ""
+    broll_strategy: str = ""
+    typography_strategy: str = ""
+    transition_strategy: str = ""
+    visual_priority_guidance: list[str] = Field(default_factory=list, max_length=12)
+    style: dict[str, Any] = Field(default_factory=dict)
+    beats: list[StoryBeat] = Field(default_factory=list, max_length=100)
+    pacing_map: list[PacingWindow] = Field(default_factory=list, max_length=100)
+    knowledge_refs: list[str] = Field(default_factory=list, max_length=20)
+
+
+class AudioWordSignal(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    text: str = ""
+    emphasis_score: float = Field(default=0, ge=0, le=1)
+    energy: float = Field(default=0.5, ge=0, le=1)
+
+
+class AudioWindow(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    words_per_second: float = Field(default=0, ge=0)
+    speech_rate: Literal["slow", "medium", "fast"] = "medium"
+    relative_loudness: float = Field(default=0.5, ge=0, le=1)
+    energy: float = Field(default=0.5, ge=0, le=1)
+
+
+class PauseSignal(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    duration: float = Field(gt=0)
+    kind: Literal["micro", "short", "medium", "long"]
+
+
+class AudioIntelligence(BaseModel):
+    duration: float = Field(default=0, ge=0)
+    windows: list[AudioWindow] = Field(default_factory=list, max_length=100)
+    pauses: list[PauseSignal] = Field(default_factory=list, max_length=200)
+    emphasis: list[AudioWordSignal] = Field(default_factory=list, max_length=300)
+    sentence_boundaries: list[dict[str, Any]] = Field(default_factory=list, max_length=200)
+    phrase_boundaries: list[dict[str, Any]] = Field(default_factory=list, max_length=300)
+    source: Literal["voiceover_metadata", "wav_measurement", "mixed"] = "voiceover_metadata"
+
+
+class VisualIntent(BaseModel):
+    purpose: Literal["explain", "emphasize", "pace", "emotion", "continuity", "retain", "interest"]
+    reason: str = Field(min_length=3, max_length=500)
+    importance: float = Field(default=0.5, ge=0, le=1)
+
+
+class CandidateDecision(BaseModel):
+    selected: str | None = None
+    alternatives: list[str] = Field(default_factory=list, max_length=5)
+    reason: str = Field(default="", max_length=500)
+
+
+class CriticProblem(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    start: float = Field(default=0, ge=0)
+    end: float = Field(default=0, ge=0)
+    severity: Literal["info", "low", "medium", "high", "severe"] = "medium"
+    kind: str
+    description: str = Field(max_length=1000)
+    hard: bool = False
+    suggested_action: str | None = Field(default=None, max_length=500)
+
+
+class CriticReport(BaseModel):
+    role: Literal["visual", "story", "continuity", "pacing", "technical"]
+    score: float = Field(default=0, ge=0, le=10)
+    problems: list[CriticProblem] = Field(default_factory=list, max_length=50)
+    signals: dict[str, Any] = Field(default_factory=dict)
+
+
+class AggregatedReview(BaseModel):
+    overall_score: float = Field(default=0, ge=0, le=10)
+    hard_failures: list[CriticProblem] = Field(default_factory=list, max_length=100)
+    critical_problems: list[CriticProblem] = Field(default_factory=list, max_length=100)
+    reports: list[CriticReport] = Field(default_factory=list, max_length=5)
+    quality_changes: dict[str, float] = Field(default_factory=dict)
+    early_exit: bool = False
+
+
+class DirectorDecision(BaseModel):
+    problem_id: str
+    decision: Literal["accept", "reject", "modify"]
+    reason: str = Field(max_length=500)
+
+
+class DirectorReview(BaseModel):
+    decisions: list[DirectorDecision] = Field(default_factory=list, max_length=50)
+    rationale: str = Field(default="", max_length=1000)
+    self_review: dict[str, Any] = Field(default_factory=dict)
+
+
+class CorrectionRange(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    goal: str = Field(min_length=2, max_length=500)
+    preserve: list[str] = Field(default_factory=list, max_length=20)
+
+
+class CorrectionPlan(BaseModel):
+    ranges: list[CorrectionRange] = Field(default_factory=list, max_length=10)
+    actions: list[dict[str, Any]] = Field(default_factory=list, max_length=30)
+    rationale: str = Field(default="", max_length=1000)
+
+
+class NaturalLanguageEdit(BaseModel):
+    scope_start: float | None = Field(default=None, ge=0)
+    scope_end: float | None = Field(default=None, gt=0)
+    intent: str = Field(default="", max_length=200)
+    constraints: list[str] = Field(default_factory=list, max_length=20)
+    preserve: list[str] = Field(default_factory=list, max_length=20)
+    ambiguous: bool = False
+    rationale: str = Field(default="", max_length=500)
+
+
+class VariantRequest(BaseModel):
+    start: float = Field(ge=0)
+    end: float = Field(gt=0)
+    goal: str = Field(min_length=2, max_length=500)
+    count: int = Field(default=2, ge=2, le=3)
+
+
+class RevisionDiff(BaseModel):
+    from_revision: uuid.UUID
+    to_revision: uuid.UUID
+    changed_ranges: list[tuple[float, float]] = Field(default_factory=list, max_length=50)
+    added_items: list[str] = Field(default_factory=list, max_length=100)
+    removed_items: list[str] = Field(default_factory=list, max_length=100)
+    quality_changes: dict[str, float] = Field(default_factory=dict)
+
+
+class ModelCapabilityProfile(BaseModel):
+    supports_tools: bool = False
+    supports_vision: bool = False
+    supports_video: bool = False
+    supports_json_schema: bool = True
+    max_context: int = Field(default=8192, ge=512)

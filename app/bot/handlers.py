@@ -306,6 +306,21 @@ async def assemble_production(callback: CallbackQuery, backend: BackendClient) -
         )
 
 
+@router.callback_query(F.data.startswith("prod_autodirector:"))
+async def run_autonomous_director(callback: CallbackQuery, backend: BackendClient) -> None:
+    await callback.answer()
+    if callback.data and isinstance(callback.message, Message):
+        production_id = callback.data.split(":", 1)[1]
+        result = await backend.run_autonomous_director(
+            production_id,
+            "Сделай ролик понятным, технологичным и динамичным. Поддержи историю "
+            "конкретными визуалами и проверь preview перед финалом.",
+        )
+        await callback.message.answer(
+            f"🧠 Автодиректор запущен. Run {result['id']} · статус: {result['status']}"
+        )
+
+
 @router.callback_query(F.data.startswith("prod_place:"))
 async def select_production_placement(callback: CallbackQuery, backend: BackendClient) -> None:
     await callback.answer("Место выбрано")

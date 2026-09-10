@@ -14,6 +14,7 @@ celery_app = Celery(
         "app.tasks.rendering",
         "app.tasks.publishing",
         "app.tasks.director",
+        "app.tasks.autonomous_director",
     ],
 )
 celery_app.conf.update(
@@ -33,6 +34,7 @@ celery_app.conf.update(
         "content_factory.publish": {"queue": "publish"},
         "content_factory.poll_publication": {"queue": "publish"},
         "content_factory.run_director": {"queue": "director"},
+        "content_factory.run_autonomous_director": {"queue": "director"},
     },
 )
 
