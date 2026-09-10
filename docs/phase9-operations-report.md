@@ -39,7 +39,7 @@ python scripts/operations_capability_test.py
 
 The smoke creates one strategy with a 14-day horizon, plans six bounded items, executes fake Producer/Director/render transitions, exercises a temporary retry, an approval, cancellation, idempotency and audit persistence. Artifacts are written to a temporary directory and are not repository data.
 
-The Phase 9 tests pass offline (`3 passed` in the focused operations suite; the full suite reached `161 passed, 3 skipped`). The full suite still reports two pre-existing environment-dependent failures because `ffmpeg` and `espeak-ng` are not installed on this deployment; they are not Phase 9 regressions.
+The Phase 9 tests pass offline (`3 passed` in the focused operations suite; the full suite reached `166 passed`). FFmpeg 9.0.1 and eSpeak NG 1.52.0 are available in the host user environment and the existing real render/TTS tests pass. Docker-based validation was not run because the Docker Linux daemon is unavailable.
 
 Current real capability status is intentionally conservative:
 

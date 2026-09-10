@@ -35,8 +35,8 @@ python -m ruff check .
 python -m mypy app
 ```
 
-The progress capability test covers no-history ETA, real history ETA, fake-history exclusion, approval wait, resume and durable snapshot behavior. Focused progress/operations, locking, recovery, retry and ownership tests pass; the full suite is `161 passed / 3 skipped` with the same two environment-dependent FFmpeg/espeak failures. Real LLM, web research, vision, FFmpeg and publishing remain untested by design.
+The progress capability test covers no-history ETA, real history ETA, fake-history exclusion, approval wait, resume and durable snapshot behavior. Focused progress/operations, locking, recovery, retry and ownership tests pass; after installing the user-local media tools, the full suite is `166 passed`. The real FFmpeg render and eSpeak TTS tests now pass on this host. Real LLM, web research, vision and publishing remain untested by design.
 
 ## Remaining work
 
-See `docs/technical-debt.md`. The remaining deployment work is an authenticated project-scope adapter and a durable Telegram notification worker; the code now has trusted actor scoping, durable retry scheduling, tick locking, stage callbacks and publication reconciliation, but real providers still require capability validation.
+See `docs/technical-debt.md`. The remaining deployment work is an authenticated project-scope adapter and a durable Telegram notification worker; the code now has trusted actor scoping, durable retry scheduling, tick locking, stage callbacks and publication reconciliation. Docker Desktop is installed but its Linux daemon is unavailable in this session.
