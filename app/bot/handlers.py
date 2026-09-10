@@ -320,6 +320,7 @@ async def production_script(callback: CallbackQuery, backend: BackendClient) -> 
     if not callback.data or not isinstance(callback.message, Message):
         return
     project_id = callback.data.split(":", 1)[1]
+    await callback.message.answer("🧠 Готовлю сценарий, это может занять до нескольких минут…")
     script = await backend.generate_production_script(project_id)
     await callback.message.answer(
         f"📝 Сценарий v{script['version_number']}\n\n{script['content']}",
@@ -370,6 +371,7 @@ async def strengthen_production_hook(callback: CallbackQuery, backend: BackendCl
     await callback.answer()
     if callback.data and isinstance(callback.message, Message):
         project_id = callback.data.split(":", 1)[1]
+        await callback.message.answer("🧠 Усиливаю hook сценария…")
         script = await backend.edit_production_script(
             project_id, "Начало слишком скучное. Усиль hook."
         )
@@ -384,7 +386,14 @@ async def apply_production_script_edit(
     message: Message, state: FSMContext, backend: BackendClient
 ) -> None:
     project_id = str((await state.get_data()).get("production_id") or "")
-    script = await backend.edit_production_script(project_id, message.text or "")
+    progress_message = await message.answer("🧠 Обновляю сценарий по вашей правке…")
+    try:
+        script = await backend.edit_production_script(project_id, message.text or "")
+    except httpx.HTTPError as exc:
+        await logger.aexception("telegram_script_edit_failed", error_type=type(exc).__name__)
+        await state.set_state(ProductionFlow.active)
+        await progress_message.edit_text("⚠️ Не удалось обновить сценарий. Попробуйте ещё раз.")
+        return
     await state.set_state(ProductionFlow.active)
     await message.answer(
         f"📝 Сценарий v{script['version_number']}\n\n"
