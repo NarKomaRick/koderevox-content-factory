@@ -12,6 +12,7 @@ from app.models import ContentItem, ContentStrategy, JobProgress
 from app.operations.clock import Clock, SystemClock
 from app.operations.domain import ContentItemStatus
 from app.operations.execution import ExecutionCoordinator
+from app.operations.locking import OperationsTickLock
 from app.operations.planner import ContentPlanner
 from app.operations.policies import OperationsPolicy
 from app.operations.recovery import RecoveryManager
@@ -38,6 +39,18 @@ class StudioOrchestrator:
     async def run_once(self, *, strategy_id: uuid.UUID | None = None) -> dict[str, Any]:
         if not self.policy.enabled and not self.fake:
             return {"enabled": False, "planned": 0, "executed": 0, "recovered": 0}
+        async with OperationsTickLock(self.session) as acquired:
+            if not acquired:
+                return {
+                    "enabled": True,
+                    "planned": 0,
+                    "executed": 0,
+                    "recovered": 0,
+                    "locked": True,
+                }
+            return await self._run_once_unlocked(strategy_id=strategy_id)
+
+    async def _run_once_unlocked(self, *, strategy_id: uuid.UUID | None) -> dict[str, Any]:
         recovered = await RecoveryManager(
             self.session, self.settings, clock=self.clock
         ).recover_stale()

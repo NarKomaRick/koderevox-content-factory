@@ -164,7 +164,44 @@ class ExecutionCoordinator:
             )
             await self.session.commit()
             if not self.fake:
-                item.status = ContentItemStatus.DIRECTOR_QUEUED
+                if item.production_project_id is None:
+                    return await self._failure(
+                        item,
+                        ErrorClass.INVALID_INPUT,
+                        "ProductionProject is required before Director enqueue",
+                    )
+                production_project_id = item.production_project_id
+                from app.director.runtime import DirectorRunService
+                from app.tasks.queue import (
+                    CeleryAutonomousDirectorTaskQueue,
+                    CeleryDirectorTaskQueue,
+                )
+
+                director_service = DirectorRunService(self.session, self.settings)
+                director_run = await director_service.status(production_project_id)
+                if director_run is None or not director_run.active:
+                    director_run = await director_service.start(
+                        production_project_id,
+                        item.topic_hint or item.title_hint or "Автономно подготовить ролик",
+                    )
+                await ProgressReporter(
+                    self.session,
+                    "director",
+                    director_run.id,
+                    source_kind="production",
+                    content_item_id=item.id,
+                    director_run_id=director_run.id,
+                    production_project_id=production_project_id,
+                    min_delta=self.settings.progress_min_percent_delta,
+                    min_interval_seconds=self.settings.progress_update_interval_seconds,
+                ).report_stage("analyzing_story", message="Анализирую историю", force=True)
+                queue = (
+                    CeleryAutonomousDirectorTaskQueue()
+                    if strategy.autonomous_mode
+                    else CeleryDirectorTaskQueue()
+                )
+                queue.enqueue(director_run.id)
+                item.status = ContentItemStatus.DIRECTOR_RUNNING
                 await self.session.commit()
                 return item
             director_progress = ProgressReporter(

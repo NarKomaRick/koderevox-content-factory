@@ -93,6 +93,7 @@ CONTENT_ITEM_TRANSITIONS: dict[ContentItemStatus, set[ContentItemStatus]] = {
     ContentItemStatus.PRODUCER_RUNNING: {
         ContentItemStatus.PRODUCER_READY,
         ContentItemStatus.QUEUED,
+        ContentItemStatus.FAILED,
         ContentItemStatus.MANUAL_REQUIRED,
         ContentItemStatus.CANCELLED,
     },
@@ -113,6 +114,7 @@ CONTENT_ITEM_TRANSITIONS: dict[ContentItemStatus, set[ContentItemStatus]] = {
     ContentItemStatus.DIRECTOR_RUNNING: {
         ContentItemStatus.PREVIEW_READY,
         ContentItemStatus.QUEUED,
+        ContentItemStatus.FAILED,
         ContentItemStatus.MANUAL_REQUIRED,
         ContentItemStatus.CANCELLED,
     },

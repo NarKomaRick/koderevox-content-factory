@@ -8,6 +8,7 @@ from app.ai.factory import create_ai_provider
 from app.core.config import get_settings
 from app.db.session import SessionFactory
 from app.models import ProducerRun
+from app.operations.callbacks import OperationsExecutionCallbacks
 from app.producer.research import FakeResearchProvider, LinkProcessorResearchProvider
 from app.producer.runtime import ProducerRuntime, create_producer_model
 from app.services.link_processor import LinkProcessor
@@ -44,6 +45,7 @@ async def run_producer_once(run_id: uuid.UUID) -> str:
             )
             try:
                 run = await runtime.run(run_id)
+                await OperationsExecutionCallbacks(session, settings).producer_finished(run_id)
                 return str(run.status)
             finally:
                 await link_processor.aclose()

@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.db.session import SessionFactory
 from app.director.autonomous import AutonomousDirector
 from app.models import DirectorRun
+from app.operations.callbacks import OperationsExecutionCallbacks
 from app.services.runtime_settings import SettingsService
 from app.tasks.celery_app import celery_app
 from app.tasks.processing import run_async
@@ -28,6 +29,7 @@ async def run_autonomous_director_once(run_id: uuid.UUID) -> DirectorRun:
             result = await AutonomousDirector(
                 session, run.production_project_id, settings, provider
             ).run(run)
+            await OperationsExecutionCallbacks(session, settings).director_finished(run_id)
             return result
         finally:
             close = getattr(provider, "aclose", None)

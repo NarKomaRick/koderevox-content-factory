@@ -17,6 +17,8 @@ The existing architecture already had clear content/runtime boundaries, but prog
 - Added Operations and Producer progress endpoints.
 - Added Telegram progress-message binding and same-message edit watcher with terminal/error/waiting states.
 - Added a small read-only `CapabilityRegistry` for feature flags and local renderer/connector availability.
+- Added stage-specific stale recovery using durable progress heartbeats and a PostgreSQL advisory-lock/SQLite fallback for Operations ticks.
+- Added idempotent Producer and Director completion callbacks so non-fake runs reconcile back into the ContentItem state machine.
 - Added migration `0011_persistent_progress`.
 - Added architecture map, glossary, capability matrix and debt register.
 
@@ -30,7 +32,7 @@ python -m ruff check .
 python -m mypy app
 ```
 
-The progress capability test covers no-history ETA, real history ETA, fake-history exclusion, approval wait, resume and durable snapshot behavior. Focused progress/operations tests pass; the full suite is `153 passed / 3 skipped` with the same two environment-dependent FFmpeg/espeak failures. Real LLM, web research, vision, FFmpeg and publishing remain untested by design.
+The progress capability test covers no-history ETA, real history ETA, fake-history exclusion, approval wait, resume and durable snapshot behavior. Focused progress/operations, locking and recovery tests pass; the full suite is `157 passed / 3 skipped` with the same two environment-dependent FFmpeg/espeak failures. Real LLM, web research, vision, FFmpeg and publishing remain untested by design.
 
 ## Remaining work
 
