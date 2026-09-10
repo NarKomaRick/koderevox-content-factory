@@ -1,8 +1,9 @@
+import uuid
 from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Header, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.base import AIProvider
@@ -88,8 +89,16 @@ ServiceDep = Annotated[ContentService, Depends(get_content_service)]
 
 def get_operations_service(
     session: Annotated[AsyncSession, Depends(get_session)],
+    actor_header: Annotated[str | None, Header(alias="X-Actor-User-Id")] = None,
 ) -> OperationsService:
-    return OperationsService(session, get_settings())
+    settings = get_settings()
+    if settings.app_env == "production" and not actor_header:
+        raise HTTPException(status_code=401, detail="X-Actor-User-Id is required")
+    try:
+        actor_user_id = uuid.UUID(actor_header) if actor_header else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid X-Actor-User-Id") from exc
+    return OperationsService(session, settings, actor_user_id=actor_user_id)
 
 
 def get_inbox_service(

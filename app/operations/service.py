@@ -35,17 +35,23 @@ from app.operations.schemas import (
     StrategyCreate,
     StrategyPatch,
 )
-from app.services.errors import InvalidStateError, NotFoundError
+from app.services.errors import InvalidStateError, NotFoundError, PermissionDenied
 
 
 class OperationsService:
     def __init__(
-        self, session: AsyncSession, settings: Settings | None = None, *, clock: Clock | None = None
+        self,
+        session: AsyncSession,
+        settings: Settings | None = None,
+        *,
+        clock: Clock | None = None,
+        actor_user_id: uuid.UUID | None = None,
     ) -> None:
         self.session = session
         self.settings = settings or Settings()
         self.clock = clock or SystemClock()
         self.policy = OperationsPolicy.from_settings(self.settings)
+        self.actor_user_id = actor_user_id
 
     @staticmethod
     def transition(item: ContentItem, target: ContentItemStatus) -> None:
@@ -57,6 +63,8 @@ class OperationsService:
         user = await self.session.get(User, data.user_id)
         if project is None or user is None:
             raise NotFoundError("Project or user not found")
+        if self.actor_user_id is not None and data.user_id != self.actor_user_id:
+            raise PermissionDenied("STRATEGY_OWNER_MISMATCH")
         strategy = ContentStrategy(
             project_id=data.project_id,
             user_id=data.user_id,
@@ -91,10 +99,14 @@ class OperationsService:
         item = await self.session.get(ContentStrategy, strategy_id)
         if item is None:
             raise NotFoundError("ContentStrategy not found")
+        if self.actor_user_id is not None and item.user_id != self.actor_user_id:
+            raise PermissionDenied("STRATEGY_ACCESS_DENIED")
         return item
 
     async def list_strategies(self, project_id: uuid.UUID | None = None) -> list[ContentStrategy]:
         query = select(ContentStrategy).order_by(ContentStrategy.created_at.desc())
+        if self.actor_user_id is not None:
+            query = query.where(ContentStrategy.user_id == self.actor_user_id)
         if project_id:
             query = query.where(ContentStrategy.project_id == project_id)
         return list((await self.session.scalars(query)).all())
@@ -153,6 +165,8 @@ class OperationsService:
         item = await self.session.get(ContentItem, item_id)
         if item is None:
             raise NotFoundError("ContentItem not found")
+        if self.actor_user_id is not None and item.user_id != self.actor_user_id:
+            raise PermissionDenied("CONTENT_ITEM_ACCESS_DENIED")
         return item
 
     async def list_items(
@@ -171,6 +185,8 @@ class OperationsService:
         )
         if strategy_id:
             query = query.where(ContentItem.strategy_id == strategy_id)
+        if self.actor_user_id is not None:
+            query = query.where(ContentItem.user_id == self.actor_user_id)
         if status:
             query = query.where(ContentItem.status == status)
         return list((await self.session.scalars(query)).all())
@@ -233,6 +249,7 @@ class OperationsService:
             raise InvalidStateError("INVALID_TRANSITION")
         self.transition(item, ContentItemStatus.QUEUED)
         item.blocked_reason = None
+        item.next_retry_at = None
         await audit(
             self.session,
             "retry_scheduled",
@@ -258,10 +275,19 @@ class OperationsService:
             query = query.where(ContentItem.scheduled_for <= end)
         if strategy_id:
             query = query.where(ContentItem.strategy_id == strategy_id)
+        if self.actor_user_id is not None:
+            query = query.where(ContentItem.user_id == self.actor_user_id)
         return list((await self.session.scalars(query.limit(500))).all())
 
     async def approvals(self, status: ApprovalStatus | None = None) -> list[ApprovalRequest]:
-        query = select(ApprovalRequest).order_by(ApprovalRequest.requested_at.desc()).limit(100)
+        query = (
+            select(ApprovalRequest)
+            .join(ContentItem, ApprovalRequest.content_item_id == ContentItem.id)
+            .order_by(ApprovalRequest.requested_at.desc())
+            .limit(100)
+        )
+        if self.actor_user_id is not None:
+            query = query.where(ContentItem.user_id == self.actor_user_id)
         if status:
             query = query.where(ApprovalRequest.status == status)
         return list((await self.session.scalars(query)).all())

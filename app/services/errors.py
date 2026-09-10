@@ -14,5 +14,9 @@ class NotFoundError(LookupError):
     pass
 
 
+class PermissionDenied(RuntimeError):
+    pass
+
+
 class InvalidStateError(RuntimeError):
     pass

@@ -150,6 +150,7 @@ class ContentItemRead(BaseModel):
     lock_reason: str | None
     attempts: int
     retry_count: int
+    next_retry_at: datetime | None
     current_stage: str | None
     failure_report: dict[str, Any]
     resource_estimate: dict[str, Any]

@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from app.api.dependencies import get_operations_service
+from app.models import ApprovalRequest
 from app.operations.approvals import ApprovalManager
 from app.operations.domain import ApprovalStatus, ContentItemStatus
 from app.operations.orchestrator import StudioOrchestrator
@@ -24,6 +25,7 @@ from app.operations.schemas import (
 )
 from app.operations.service import OperationsService
 from app.progress import PipelineProgressService
+from app.services.errors import NotFoundError
 
 router = APIRouter(prefix="/operations", tags=["operations"])
 ServiceDep = Annotated[OperationsService, Depends(get_operations_service)]
@@ -86,6 +88,7 @@ async def get_item(item_id: uuid.UUID, service: ServiceDep) -> object:
 
 @router.get("/items/{item_id}/progress")
 async def item_progress(item_id: uuid.UUID, service: ServiceDep) -> object:
+    await service.get_item(item_id)
     return await PipelineProgressService(service.session).for_item(item_id)
 
 
@@ -118,6 +121,7 @@ async def resume_item(item_id: uuid.UUID, service: ServiceDep) -> object:
 async def plan_strategy(strategy_id: uuid.UUID, service: ServiceDep) -> object:
     from app.operations.planner import ContentPlanner
 
+    await service.get_strategy(strategy_id)
     return await ContentPlanner(
         service.session, clock=service.clock, policy=service.policy
     ).plan_strategy(strategy_id)
@@ -126,13 +130,21 @@ async def plan_strategy(strategy_id: uuid.UUID, service: ServiceDep) -> object:
 @router.post("/tick")
 async def operations_tick(service: ServiceDep) -> object:
     return await StudioOrchestrator(
-        service.session, service.settings, clock=service.clock
+        service.session,
+        service.settings,
+        clock=service.clock,
+        actor_user_id=service.actor_user_id,
     ).run_once()
 
 
 @router.get("/status")
 async def operations_status(service: ServiceDep) -> object:
-    return await StudioOrchestrator(service.session, service.settings, clock=service.clock).status()
+    return await StudioOrchestrator(
+        service.session,
+        service.settings,
+        clock=service.clock,
+        actor_user_id=service.actor_user_id,
+    ).status()
 
 
 @router.get("/calendar", response_model=list[ContentItemRead])
@@ -155,6 +167,10 @@ async def approvals(
 
 @router.post("/approvals/{approval_id}/approve", response_model=ApprovalRead)
 async def approve(approval_id: uuid.UUID, data: ApprovalDecision, service: ServiceDep) -> object:
+    approval = await service.session.get(ApprovalRequest, approval_id)
+    if approval is None:
+        raise NotFoundError("Approval request not found")
+    await service.get_item(approval.content_item_id)
     return await ApprovalManager(service.session, policy=service.policy).decide(
         approval_id, approved=True, data=data
     )
@@ -162,6 +178,10 @@ async def approve(approval_id: uuid.UUID, data: ApprovalDecision, service: Servi
 
 @router.post("/approvals/{approval_id}/reject", response_model=ApprovalRead)
 async def reject(approval_id: uuid.UUID, data: ApprovalDecision, service: ServiceDep) -> object:
+    approval = await service.session.get(ApprovalRequest, approval_id)
+    if approval is None:
+        raise NotFoundError("Approval request not found")
+    await service.get_item(approval.content_item_id)
     return await ApprovalManager(service.session, policy=service.policy).decide(
         approval_id, approved=False, data=data
     )

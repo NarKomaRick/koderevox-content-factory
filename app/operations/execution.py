@@ -21,6 +21,7 @@ from app.operations.policies import OperationsPolicy
 from app.producer.runtime import ProducerRuntime, ProducerService
 from app.progress import ProgressReporter
 from app.schemas.producer import ProducerRunCreate
+from app.services.retry_policy import RetryPolicy
 
 
 class ExecutionCoordinator:
@@ -53,6 +54,7 @@ class ExecutionCoordinator:
         if item.status in {ContentItemStatus.PLANNED, ContentItemStatus.DEFERRED}:
             ensure_content_item_transition(item.status, ContentItemStatus.QUEUED)
             item.status = ContentItemStatus.QUEUED
+        item.next_retry_at = None
         if item.status == ContentItemStatus.QUEUED:
             budget = await self.budgets.check(strategy)
             if budget.decision != "allow":
@@ -283,6 +285,16 @@ class ExecutionCoordinator:
         self, item: ContentItem, error_class: ErrorClass, message: str
     ) -> ContentItem:
         item.retry_count += 1
+        retryable = error_class in {
+            ErrorClass.TEMPORARY,
+            ErrorClass.RATE_LIMIT,
+            ErrorClass.EXTERNAL_DEPENDENCY,
+        }
+        retry = RetryPolicy(
+            max_attempts=self.policy.max_producer_retries + 1,
+            delays_seconds=self.settings.operations_retry_delays_seconds,
+            jitter_ratio=0,
+        ).decide_for(item.retry_count, retryable=retryable)
         item.failure_report = {
             "stage": item.current_stage,
             "attempts": item.attempts,
@@ -291,11 +303,10 @@ class ExecutionCoordinator:
             "recoverable": error_class
             in {ErrorClass.TEMPORARY, ErrorClass.RATE_LIMIT, ErrorClass.EXTERNAL_DEPENDENCY},
         }
-        if item.retry_count <= self.policy.max_producer_retries and error_class in {
-            ErrorClass.TEMPORARY,
-            ErrorClass.RATE_LIMIT,
-            ErrorClass.EXTERNAL_DEPENDENCY,
-        }:
+        if retry.retry:
+            retry_at = datetime.now(UTC) if self.fake else retry.retry_at
+            item.next_retry_at = retry_at
+            item.failure_report["next_retry_at"] = retry_at.isoformat() if retry_at else None
             ensure_content_item_transition(item.status, ContentItemStatus.QUEUED)
             item.status = ContentItemStatus.QUEUED
             await audit(
@@ -308,6 +319,7 @@ class ExecutionCoordinator:
                 data={"retry_count": item.retry_count},
             )
         else:
+            item.next_retry_at = None
             ensure_content_item_transition(item.status, ContentItemStatus.MANUAL_REQUIRED)
             item.status = ContentItemStatus.MANUAL_REQUIRED
             await audit(

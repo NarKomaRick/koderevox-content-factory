@@ -150,6 +150,9 @@ class Settings(BaseSettings):
     operations_max_director_retries: int = Field(default=2, ge=0, le=10)
     operations_max_render_retries: int = Field(default=2, ge=0, le=10)
     operations_max_publish_retries: int = Field(default=2, ge=0, le=10)
+    operations_retry_delays_seconds: Annotated[list[int], NoDecode] = Field(
+        default_factory=lambda: [60, 300, 900]
+    )
     operations_max_llm_calls_per_day: int = Field(default=100, ge=0, le=10000)
     operations_max_research_searches_per_day: int = Field(default=100, ge=0, le=10000)
     operations_max_retries_per_day: int = Field(default=20, ge=0, le=1000)
@@ -186,7 +189,9 @@ class Settings(BaseSettings):
             return [int(item.strip()) for item in value.split(",")]
         return value
 
-    @field_validator("publish_retry_delays_seconds", mode="before")
+    @field_validator(
+        "publish_retry_delays_seconds", "operations_retry_delays_seconds", mode="before"
+    )
     @classmethod
     def parse_retry_delays(cls, value: object) -> object:
         if isinstance(value, str):

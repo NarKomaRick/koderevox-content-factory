@@ -29,12 +29,14 @@ class StudioOrchestrator:
         *,
         clock: Clock | None = None,
         fake: bool | None = None,
+        actor_user_id: uuid.UUID | None = None,
     ) -> None:
         self.session = session
         self.settings = settings or Settings()
         self.clock = clock or SystemClock()
         self.policy = OperationsPolicy.from_settings(self.settings)
         self.fake = self.settings.operations_dry_run if fake is None else fake
+        self.actor_user_id = actor_user_id
 
     async def run_once(self, *, strategy_id: uuid.UUID | None = None) -> dict[str, Any]:
         if not self.policy.enabled and not self.fake:
@@ -59,6 +61,8 @@ class StudioOrchestrator:
         )
         if strategy_id:
             strategies_query = strategies_query.where(ContentStrategy.id == strategy_id)
+        if self.actor_user_id is not None:
+            strategies_query = strategies_query.where(ContentStrategy.user_id == self.actor_user_id)
         strategies = (await self.session.scalars(strategies_query)).all()
         planned = 0
         for strategy in strategies:
@@ -70,6 +74,7 @@ class StudioOrchestrator:
             await self.session.scalars(
                 select(ContentItem)
                 .where(
+                    *([ContentItem.user_id == self.actor_user_id] if self.actor_user_id else []),
                     ContentItem.status.in_(
                         [
                             ContentItemStatus.PLANNED,
@@ -81,6 +86,10 @@ class StudioOrchestrator:
                     or_(
                         ContentItem.scheduled_for.is_(None),
                         ContentItem.scheduled_for <= self.clock.now(),
+                    ),
+                    or_(
+                        ContentItem.next_retry_at.is_(None),
+                        ContentItem.next_retry_at <= self.clock.now(),
                     ),
                 )
                 .order_by(ContentItem.priority.desc(), ContentItem.scheduled_for)
@@ -130,7 +139,11 @@ class StudioOrchestrator:
         counts: dict[str, int] = {}
         rows = (
             await self.session.execute(
-                select(ContentItem.status, func.count()).group_by(ContentItem.status)
+                select(ContentItem.status, func.count())
+                .where(
+                    *([ContentItem.user_id == self.actor_user_id] if self.actor_user_id else [])
+                )
+                .group_by(ContentItem.status)
             )
         ).all()
         counts.update({str(status): int(count) for status, count in rows})
@@ -142,6 +155,7 @@ class StudioOrchestrator:
                 .where(
                     ContentItem.status == ContentItemStatus.PUBLISHED,
                     ContentItem.completed_at >= week,
+                    *([ContentItem.user_id == self.actor_user_id] if self.actor_user_id else []),
                 )
             )
             or 0
@@ -151,14 +165,20 @@ class StudioOrchestrator:
                 select(func.count())
                 .select_from(ContentStrategy)
                 .where(ContentStrategy.enabled.is_(True))
+                .where(
+                    *([ContentStrategy.user_id == self.actor_user_id] if self.actor_user_id else [])
+                )
             )
             or 0
         )
-        active_progress = (
-            await self.session.scalars(
-                select(JobProgress).where(JobProgress.state.in_(["running", "retrying", "waiting"]))
-            )
-        ).all()
+        progress_query = select(JobProgress).where(
+            JobProgress.state.in_(["running", "retrying", "waiting"])
+        )
+        if self.actor_user_id is not None:
+            progress_query = progress_query.join(
+                ContentItem, JobProgress.content_item_id == ContentItem.id
+            ).where(ContentItem.user_id == self.actor_user_id)
+        active_progress = (await self.session.scalars(progress_query)).all()
         approvals = counts.get(ContentItemStatus.AWAITING_SCRIPT_APPROVAL, 0) + counts.get(
             ContentItemStatus.AWAITING_PREVIEW_APPROVAL, 0
         )

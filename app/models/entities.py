@@ -871,6 +871,7 @@ class ContentItem(Base):
     correction_instruction: Mapped[str | None] = mapped_column(Text)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     current_stage: Mapped[str | None] = mapped_column(String(40))
     failure_report: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
     resource_estimate: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)

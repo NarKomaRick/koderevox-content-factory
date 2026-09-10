@@ -28,7 +28,12 @@ class RetryPolicy:
     def decide(
         self, attempt_number: int, error: PublishingError, *, now: datetime | None = None
     ) -> RetryDecision:
-        if not error.retryable or attempt_number >= self.max_attempts:
+        return self.decide_for(attempt_number, retryable=error.retryable, now=now)
+
+    def decide_for(
+        self, attempt_number: int, *, retryable: bool, now: datetime | None = None
+    ) -> RetryDecision:
+        if not retryable or attempt_number >= self.max_attempts:
             return RetryDecision(False)
         base = self.delays[min(attempt_number - 1, len(self.delays) - 1)]
         jitter = self.random.uniform(-self.jitter_ratio, self.jitter_ratio)

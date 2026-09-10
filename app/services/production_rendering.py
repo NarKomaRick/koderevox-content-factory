@@ -10,11 +10,13 @@ from typing import Any
 import structlog
 from PIL import Image, ImageDraw, ImageFont
 from PIL.ImageFont import FreeTypeFont
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.editing.graphics import GraphicsRenderer
 from app.models import (
+    ContentItem,
     ProductionProject,
     Project,
     ScriptVersion,
@@ -30,6 +32,7 @@ from app.models.enums import (
     TimelineTrack,
     VideoProjectStatus,
 )
+from app.progress import ProgressReporter
 from app.schemas.production import ProductionTimeline, TimelineItem
 from app.services.audio import AudioProcessor
 from app.services.errors import InvalidStateError, NotFoundError
@@ -55,6 +58,33 @@ class ProductionRenderService:
         self.validator = FFmpegVideoEditor(font_path=settings.video_font_path)
 
     async def render(
+        self, production_project_id: uuid.UUID, *, profile_name: str = "preview"
+    ) -> VideoProject:
+        item = await self.session.scalar(
+            select(ContentItem).where(ContentItem.production_project_id == production_project_id)
+        )
+        reporter = ProgressReporter(
+            self.session,
+            "render",
+            production_project_id,
+            source_kind="production",
+            content_item_id=item.id if item else None,
+            production_project_id=production_project_id,
+            min_delta=self.settings.progress_min_percent_delta,
+            min_interval_seconds=self.settings.progress_update_interval_seconds,
+        )
+        await reporter.report_stage(
+            "render", message=f"Рендерю {profile_name}", force=True
+        )
+        try:
+            result = await self._render(production_project_id, profile_name=profile_name)
+            await reporter.complete(message=f"Рендер {profile_name} завершён")
+            return result
+        except Exception as exc:
+            await reporter.fail(error_code=type(exc).__name__, message=str(exc)[:2000])
+            raise
+
+    async def _render(
         self, production_project_id: uuid.UUID, *, profile_name: str = "preview"
     ) -> VideoProject:
         production = await self.session.get(ProductionProject, production_project_id)

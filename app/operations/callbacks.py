@@ -6,7 +6,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.models import ContentItem, ContentStrategy, DirectorRun, ProducerRun
+from app.models import (
+    ContentItem,
+    ContentStrategy,
+    DirectorRun,
+    ProducerRun,
+    ProductionProject,
+    Publication,
+    PublishPackage,
+)
+from app.models.enums import PublishPackageStatus
 from app.operations.approvals import ApprovalManager
 from app.operations.audit import audit
 from app.operations.domain import (
@@ -44,6 +53,8 @@ class OperationsExecutionCallbacks:
             item.production_project_id = run.production_project_id
             if item.status != ContentItemStatus.PRODUCER_RUNNING:
                 return item
+            ensure_content_item_transition(item.status, ContentItemStatus.PRODUCER_READY)
+            item.status = ContentItemStatus.PRODUCER_READY
             if self.policy.requires_script_approval(strategy.approval_policy):
                 ensure_content_item_transition(
                     item.status, ContentItemStatus.AWAITING_SCRIPT_APPROVAL
@@ -112,6 +123,38 @@ class OperationsExecutionCallbacks:
         elif run.status == "failed":
             await self._mark_failed(item, run.error or "Director run failed")
         await self.session.commit()
+        return item
+
+    async def publication_finished(self, publication_id: uuid.UUID) -> ContentItem | None:
+        publication = await self.session.get(Publication, publication_id)
+        if publication is None:
+            return None
+        package = await self.session.get(PublishPackage, publication.publish_package_id)
+        if package is None:
+            return None
+        item = await self.session.scalar(
+            select(ContentItem)
+            .join(ProductionProject, ContentItem.production_project_id == ProductionProject.id)
+            .where(ProductionProject.active_video_project_id == package.video_project_id)
+        )
+        if item is None or package.status != PublishPackageStatus.PUBLISHED:
+            return item
+        if item.status == ContentItemStatus.READY_TO_PUBLISH:
+            ensure_content_item_transition(item.status, ContentItemStatus.PUBLISHING)
+            item.status = ContentItemStatus.PUBLISHING
+        if item.status == ContentItemStatus.PUBLISHING:
+            ensure_content_item_transition(item.status, ContentItemStatus.PUBLISHED)
+            item.status = ContentItemStatus.PUBLISHED
+            item.completed_at = publication.published_at
+            await audit(
+                self.session,
+                "content_published",
+                strategy_id=item.strategy_id,
+                project_id=item.project_id,
+                content_item_id=item.id,
+                rationale="Publication package completed",
+            )
+            await self.session.commit()
         return item
 
     async def _mark_failed(self, item: ContentItem, message: str) -> None:

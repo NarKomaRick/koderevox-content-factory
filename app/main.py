@@ -21,7 +21,7 @@ from app.api.routes import (
 )
 from app.core.config import get_settings
 from app.core.logging import configure_logging
-from app.services.errors import InvalidStateError, NotFoundError, ProcessingError
+from app.services.errors import InvalidStateError, NotFoundError, PermissionDenied, ProcessingError
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -56,6 +56,11 @@ async def not_found_handler(_request: Request, exc: NotFoundError) -> JSONRespon
 @app.exception_handler(InvalidStateError)
 async def invalid_state_handler(_request: Request, exc: InvalidStateError) -> JSONResponse:
     return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(PermissionDenied)
+async def permission_denied_handler(_request: Request, exc: PermissionDenied) -> JSONResponse:
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
 app.include_router(projects.router)

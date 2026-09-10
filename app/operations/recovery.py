@@ -59,6 +59,7 @@ class RecoveryManager:
             )
             ensure_content_item_transition(item.status, target_status)
             item.status = target_status
+            item.next_retry_at = None
             item.blocked_reason = None
             item.failure_report = {
                 **item.failure_report,
