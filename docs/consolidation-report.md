@@ -39,4 +39,10 @@ The progress capability test covers no-history ETA, real history ETA, fake-histo
 
 ## Remaining work
 
-See `docs/technical-debt.md`. The remaining deployment work is an authenticated project-scope adapter and a durable Telegram notification worker; the code now has trusted actor scoping, durable retry scheduling, tick locking, stage callbacks and publication reconciliation. Docker Desktop is installed but its Linux daemon is unavailable in this session.
+See `docs/technical-debt.md`. The remaining deployment work is an authenticated project-scope adapter and a durable Telegram notification worker; the code now has trusted actor scoping, durable retry scheduling, tick locking, stage callbacks and publication reconciliation.
+
+## Post-reboot container validation
+
+On 2026-09-10 Docker Desktop was recovered from a Windows stale AF_UNIX socket failure by rotating only the Docker Desktop runtime socket directories and disabling the unused Docker AI listener; images, volumes and project data were preserved. The current checkout was rebuilt and the local Compose stack was recreated. API startup applied migrations `0007` through `0012`, and Alembic confirmed `0012_operations_retry_backoff (head)`. API, worker, render-worker, publish-worker and publish-scheduler healthchecks passed; `/health` returned 200.
+
+The Telegram profile was intentionally left stopped because its configured external proxy `host.docker.internal:2081` is not listening on this host. Telegram delivery and real publishing therefore remain untested. The host full suite remains `166 passed`; operations and progress capability smokes also passed after the reboot.

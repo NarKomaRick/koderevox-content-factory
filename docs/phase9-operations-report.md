@@ -39,7 +39,7 @@ python scripts/operations_capability_test.py
 
 The smoke creates one strategy with a 14-day horizon, plans six bounded items, executes fake Producer/Director/render transitions, exercises a temporary retry, an approval, cancellation, idempotency and audit persistence. Artifacts are written to a temporary directory and are not repository data.
 
-The Phase 9 tests pass offline (`3 passed` in the focused operations suite; the full suite reached `166 passed`). FFmpeg 9.0.1 and eSpeak NG 1.52.0 are available in the host user environment and the existing real render/TTS tests pass. Docker-based validation was not run because the Docker Linux daemon is unavailable.
+The Phase 9 tests pass offline (`3 passed` in the focused operations suite; the full suite reached `166 passed`). FFmpeg 9.0.1 and eSpeak NG 1.52.0 are available in the host user environment and the existing real render/TTS tests pass. After the reboot, the current checkout was rebuilt into Docker images and the local Compose stack was recreated. API startup applied migrations through `0012_operations_retry_backoff`, and API, worker, render-worker, publish-worker and publish-scheduler healthchecks passed. The Telegram profile remains stopped because its configured external proxy `host.docker.internal:2081` is unavailable; Telegram delivery and real publishing are not claimed as tested.
 
 Current real capability status is intentionally conservative:
 
