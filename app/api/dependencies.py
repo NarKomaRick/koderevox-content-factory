@@ -10,6 +10,7 @@ from app.ai.factory import create_ai_provider
 from app.core.config import get_settings
 from app.db.session import get_session
 from app.director.runtime import DirectorRunService
+from app.operations.service import OperationsService
 from app.producer.runtime import ProducerService
 from app.services.assets import AssetService
 from app.services.content import ContentService
@@ -83,6 +84,12 @@ def get_content_service(
 
 
 ServiceDep = Annotated[ContentService, Depends(get_content_service)]
+
+
+def get_operations_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> OperationsService:
+    return OperationsService(session, get_settings())
 
 
 def get_inbox_service(

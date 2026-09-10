@@ -13,6 +13,8 @@ def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="✨ Создать ролик")],
+            [KeyboardButton(text="🗓 Контент-план"), KeyboardButton(text="📊 Статус студии")],
+            [KeyboardButton(text="✅ На проверку")],
             [KeyboardButton(text="🎬 Новый ролик"), KeyboardButton(text="📂 Мои ролики")],
             [KeyboardButton(text="➕ Новая идея"), KeyboardButton(text="📥 Контент-инбокс")],
             [KeyboardButton(text="📎 Добавить материалы"), KeyboardButton(text="🗂 Материалы")],

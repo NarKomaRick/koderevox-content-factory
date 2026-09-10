@@ -747,6 +747,202 @@ class ContentChannelProfile(Base):
     )
 
 
+class ContentStrategy(Base):
+    __tablename__ = "content_strategies"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    channel_profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("content_channel_profiles.id", ondelete="SET NULL"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
+    goal: Mapped[str] = mapped_column(Text, default="")
+    default_platforms: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    default_duration: Mapped[float] = mapped_column(Float, default=60)
+    weekly_target: Mapped[int] = mapped_column(Integer, default=3)
+    approval_policy: Mapped[str] = mapped_column(String(32), default="before_publish")
+    autonomous_mode: Mapped[bool] = mapped_column(Boolean, default=True)
+    auto_publish: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
+    recurrence_rule: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    budget: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc
+    )
+
+
+class ContentStrategyPillar(Base):
+    __tablename__ = "content_strategy_pillars"
+    __table_args__ = (UniqueConstraint("strategy_id", "name", name="uq_strategy_pillar_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("content_strategies.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(128))
+    weight: Mapped[float] = mapped_column(Float, default=0.25)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    minimum_gap_days: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ContentSeries(Base):
+    __tablename__ = "content_series"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("content_strategies.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str] = mapped_column(Text, default="")
+    sequence_mode: Mapped[str] = mapped_column(String(32), default="ordered")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ContentCampaign(Base):
+    __tablename__ = "content_campaigns"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("content_strategies.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
+    goal: Mapped[str] = mapped_column(Text, default="")
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=50)
+    target_content_count: Mapped[int | None] = mapped_column(Integer)
+    allowed_pillars: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    instructions: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class ContentItem(Base):
+    __tablename__ = "content_items"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    strategy_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("content_strategies.id", ondelete="RESTRICT"), index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="RESTRICT"), index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    campaign_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("content_campaigns.id", ondelete="SET NULL"), index=True
+    )
+    series_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("content_series.id", ondelete="SET NULL"), index=True
+    )
+    series_position: Mapped[int | None] = mapped_column(Integer)
+    title_hint: Mapped[str | None] = mapped_column(String(500))
+    topic_hint: Mapped[str | None] = mapped_column(Text)
+    pillar: Mapped[str | None] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(40), default="planned", index=True)
+    priority: Mapped[int] = mapped_column(Integer, default=50, index=True)
+    manual_priority: Mapped[str] = mapped_column(String(16), default="normal")
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    publish_not_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    publish_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    target_platforms: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    producer_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("producer_runs.id", ondelete="SET NULL"), index=True
+    )
+    production_project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("production_projects.id", ondelete="SET NULL"), index=True
+    )
+    approval_state: Mapped[str] = mapped_column(String(32), default="not_required")
+    blocked_reason: Mapped[str | None] = mapped_column(String(255))
+    operator_notes: Mapped[list[str]] = mapped_column(JSON_DOCUMENT, default=list)
+    locked: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    lock_reason: Mapped[str | None] = mapped_column(String(64))
+    correction_instruction: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    current_stage: Mapped[str | None] = mapped_column(String(40))
+    failure_report: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    resource_estimate: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    idempotency_key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    replaces_content_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("content_items.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, onupdate=now_utc, index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ContentDependency(Base):
+    __tablename__ = "content_dependencies"
+    __table_args__ = (
+        UniqueConstraint("content_item_id", "depends_on_item_id", name="uq_content_dependency"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    content_item_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("content_items.id", ondelete="CASCADE"), index=True
+    )
+    depends_on_item_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("content_items.id", ondelete="RESTRICT"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    reason: Mapped[str] = mapped_column(String(255), default="")
+
+
+class ApprovalRequest(Base):
+    __tablename__ = "approval_requests"
+    __table_args__ = (
+        UniqueConstraint("content_item_id", "checkpoint", name="uq_content_approval_checkpoint"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    content_item_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("content_items.id", ondelete="CASCADE"), index=True
+    )
+    checkpoint: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    comment: Mapped[str | None] = mapped_column(Text)
+
+
+class OperationsAuditEvent(Base):
+    __tablename__ = "operations_audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), index=True
+    )
+    strategy_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("content_strategies.id", ondelete="SET NULL"), index=True
+    )
+    content_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("content_items.id", ondelete="SET NULL"), index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(64), index=True)
+    rationale: Mapped[str] = mapped_column(String(2000), default="")
+    data: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=now_utc, index=True
+    )
+
+
 class RuntimeSetting(Base):
     __tablename__ = "runtime_settings"
     __table_args__ = (

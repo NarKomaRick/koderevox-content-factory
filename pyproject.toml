@@ -54,6 +54,15 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 
+[tool.ruff.lint.per-file-ignores]
+# Composition-heavy orchestration/migration declarations remain readable when
+# the project-wide 100-column rule is applied to the rest of the codebase.
+"app/operations/*.py" = ["E501"]
+"app/api/routes/operations.py" = ["E501", "B008"]
+"app/db/migrations/versions/0010_content_operations.py" = ["E501"]
+"scripts/operations_capability_test.py" = ["E501"]
+"tests/test_phase9_operations.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 plugins = ["pydantic.mypy"]

@@ -131,6 +131,30 @@ class Settings(BaseSettings):
     producer_strict_factuality: bool = True
     producer_research_extractor_version: str = "producer-html-v1"
 
+    # Phase 9: opt-in autonomous content operations.
+    operations_enabled: bool = False
+    operations_dry_run: bool = False
+    operations_planning_horizon_days: int = Field(default=14, ge=1, le=90)
+    operations_max_planned_items: int = Field(default=50, ge=1, le=500)
+    operations_max_active_items: int = Field(default=5, ge=1, le=100)
+    operations_max_producer_concurrency: int = Field(default=1, ge=1, le=50)
+    operations_max_director_concurrency: int = Field(default=1, ge=1, le=50)
+    operations_max_render_concurrency: int = Field(default=1, ge=1, le=50)
+    operations_max_pending_render: int = Field(default=5, ge=0, le=500)
+    operations_max_pending_approval: int = Field(default=20, ge=0, le=500)
+    operations_tick_interval_seconds: int = Field(default=180, ge=10, le=3600)
+    operations_producer_stale_seconds: int = Field(default=3600, ge=60, le=604800)
+    operations_director_stale_seconds: int = Field(default=3600, ge=60, le=604800)
+    operations_render_stale_seconds: int = Field(default=3600, ge=60, le=604800)
+    operations_max_producer_retries: int = Field(default=2, ge=0, le=10)
+    operations_max_director_retries: int = Field(default=2, ge=0, le=10)
+    operations_max_render_retries: int = Field(default=2, ge=0, le=10)
+    operations_max_publish_retries: int = Field(default=2, ge=0, le=10)
+    operations_max_llm_calls_per_day: int = Field(default=100, ge=0, le=10000)
+    operations_max_research_searches_per_day: int = Field(default=100, ge=0, le=10000)
+    operations_max_retries_per_day: int = Field(default=20, ge=0, le=1000)
+    operations_auto_publish: bool = False
+
     publish_scheduler_interval_seconds: int = Field(default=30, ge=1, le=3600)
     publish_max_attempts: int = Field(default=5, ge=1, le=20)
     celery_publish_concurrency: int = Field(default=2, ge=1, le=32)

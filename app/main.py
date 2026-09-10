@@ -9,6 +9,7 @@ from app.api.routes import (
     drafts,
     ideas,
     inbox,
+    operations,
     producer,
     production,
     projects,
@@ -69,6 +70,7 @@ app.include_router(video_projects.router)
 app.include_router(assets.router)
 app.include_router(thumbnails.router)
 app.include_router(publishing.router)
+app.include_router(operations.router)
 
 
 @app.exception_handler(ProcessingError)

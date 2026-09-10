@@ -24,6 +24,15 @@ class BackendClient:
             payload["idempotency_key"] = idempotency_key
         return await self._request("POST", "/producer/runs", json=payload)
 
+    async def operations_status(self) -> dict[str, Any]:
+        return await self._request("GET", "/operations/status")
+
+    async def operations_calendar(self) -> list[dict[str, Any]]:
+        return await self._request("GET", "/operations/calendar")
+
+    async def operations_approvals(self) -> list[dict[str, Any]]:
+        return await self._request("GET", "/operations/approvals", params={"status": "pending"})
+
     async def create_text_source(
         self, *, telegram_user_id: int, telegram_username: str | None, text: str
     ) -> dict[str, Any]:

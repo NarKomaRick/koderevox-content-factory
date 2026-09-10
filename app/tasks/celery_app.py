@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.director",
         "app.tasks.autonomous_director",
         "app.tasks.producer",
+        "app.tasks.operations",
     ],
 )
 celery_app.conf.update(
@@ -37,6 +38,13 @@ celery_app.conf.update(
         "content_factory.run_director": {"queue": "director"},
         "content_factory.run_autonomous_director": {"queue": "director"},
         "content_factory.run_producer": {"queue": "producer"},
+        "content_factory.operations.tick": {"queue": "operations"},
+    },
+    beat_schedule={
+        "operations_tick": {
+            "task": "content_factory.operations.tick",
+            "schedule": settings.operations_tick_interval_seconds,
+        }
     },
 )
 

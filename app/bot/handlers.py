@@ -133,6 +133,40 @@ async def receive_producer_prompt(
     await message.answer(f"✅ Producer run created: {run['id']}\n🔎 Исследую тему")
 
 
+@router.message(F.text == "📊 Статус студии")
+async def operations_status(message: Message, backend: BackendClient) -> None:
+    status = await backend.operations_status()
+    await message.answer(
+        "📊 Статус студии\n"
+        f"🟢 готово к публикации: {status.get('ready_to_publish', 0)}\n"
+        f"🟡 Producer: {status.get('producer_running', 0)}\n"
+        f"🟣 Director: {status.get('director_running', 0)}\n"
+        f"🟠 на проверке: {status.get('awaiting_approval', 0)}\n"
+        f"🔴 ошибки: {status.get('failed', 0)}"
+    )
+
+
+@router.message(F.text == "🗓 Контент-план")
+async def operations_calendar(message: Message, backend: BackendClient) -> None:
+    items = await backend.operations_calendar()
+    if not items:
+        await message.answer("🗓 В ближайшем контент-плане пока нет роликов.")
+        return
+    lines = ["🗓 Ближайшие ролики:"]
+    for item in items[:10]:
+        topic = item.get("topic_hint") or item.get("pillar") or "тема не выбрана"
+        lines.append(
+            f"• {item.get('scheduled_for', 'без даты')} — {topic} [{item.get('status')}]"
+        )
+    await message.answer("\n".join(lines))
+
+
+@router.message(F.text == "✅ На проверку")
+async def operations_approvals(message: Message, backend: BackendClient) -> None:
+    items = await backend.operations_approvals()
+    await message.answer(f"✅ На проверке сейчас: {len(items)}")
+
+
 @router.message(F.text == "🎬 Новый ролик")
 async def new_production(message: Message, state: FSMContext) -> None:
     await state.set_state(ProductionFlow.waiting_for_idea)
